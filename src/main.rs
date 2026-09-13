@@ -40,7 +40,11 @@ static ACTIVE_AGENT: LazyLock<ActiveAgent> = LazyLock::new(|| {
 #[strum(serialize_all = "lowercase")]
 enum ActiveAgent {
     Demo,
-    Template,
+    NewsBreakout,
+    NewsFade,
+    NewsHybrid,
+    FairValueGap,
+    Overnight,
 }
 
 #[tokio::main]

@@ -104,6 +104,18 @@ pub struct NewsBreakout {
 }
 
 impl NewsBreakout {
+    pub async fn env() -> Result<Environment> {
+        let preset = EnvPreset::NinjaTraderCme6eu61mUsEmpHighEventsOnly;
+        let file_stem = preset.to_string();
+
+        let loc = StorageLocation::HuggingFace { version: None };
+        let cfg = IoConfig::new(loc).with_file_stem(&file_stem);
+
+        chapaty::load(preset, &cfg)
+            .await
+            .context("Failed to load trading environment")
+    }
+    
     pub fn baseline(economic_cal_id: EconomicCalendarId, ohlcv_id: OhlcvId) -> Self {
         Self {
             economic_cal_id,
