@@ -387,45 +387,6 @@ impl NewsFadeGrid {
         })
     }
 
-    /// Overrides the range of candles to consider after a news event.
-    /// Range is `[start, end)`.
-    #[expect(
-        dead_code,
-        reason = "public grid-override API for callers customizing the search space"
-    )]
-    pub const fn with_candles_after_news(self, start: Duration, end: Duration) -> Self {
-        Self {
-            wait_duration: (start, end),
-            ..self
-        }
-    }
-
-    /// Overrides the take-profit risk factor parameter range.
-    /// Range is `[start, end)`.
-    #[expect(
-        dead_code,
-        reason = "public grid-override API for callers customizing the search space"
-    )]
-    pub const fn with_take_profit_risk_factor(self, axis: GridAxis) -> Self {
-        Self {
-            tp_risk_factor: axis,
-            ..self
-        }
-    }
-
-    /// Overrides the risk reward ratio parameter range.
-    /// Range is `[start, end)`.
-    #[expect(
-        dead_code,
-        reason = "public grid-override API for callers customizing the search space"
-    )]
-    pub const fn with_risk_reward_ratio(self, axis: GridAxis) -> Self {
-        Self {
-            risk_reward: axis,
-            ..self
-        }
-    }
-
     #[expect(
         clippy::expect_used,
         reason = "risk_reward_ratio grid axis is always > 0.0 by construction"

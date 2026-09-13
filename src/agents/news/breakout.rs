@@ -391,54 +391,6 @@ impl NewsBreakoutGrid {
         })
     }
 
-    /// Overrides the range of earliest entry times. Range is `[start, end)`.
-    #[expect(
-        dead_code,
-        reason = "public grid-override API for callers customizing the search space"
-    )]
-    pub const fn with_earliest_entry_range(self, start: Duration, end: Duration) -> Self {
-        Self {
-            earliest_entry: (start, end),
-            ..self
-        }
-    }
-
-    /// Overrides the range of latest entry times. Range is `[start, end)`.
-    #[expect(
-        dead_code,
-        reason = "public grid-override API for callers customizing the search space"
-    )]
-    pub const fn with_latest_entry_range(self, start: Duration, end: Duration) -> Self {
-        Self {
-            latest_entry: (start, end),
-            ..self
-        }
-    }
-
-    /// Overrides the stop-loss risk factor range. Range is `[start, end)`.
-    #[expect(
-        dead_code,
-        reason = "public grid-override API for callers customizing the search space"
-    )]
-    pub const fn with_stop_loss_risk_factor(self, axis: GridAxis) -> Self {
-        Self {
-            stop_loss_risk_factor: axis,
-            ..self
-        }
-    }
-
-    /// Overrides the risk reward ratio range. Range is `[start, end)`.
-    #[expect(
-        dead_code,
-        reason = "public grid-override API for callers customizing the search space"
-    )]
-    pub const fn with_risk_reward_ratio(self, axis: GridAxis) -> Self {
-        Self {
-            risk_reward_ratio: axis,
-            ..self
-        }
-    }
-
     #[expect(
         clippy::expect_used,
         reason = "risk_reward_ratio grid axis is always > 0.0 by construction"
