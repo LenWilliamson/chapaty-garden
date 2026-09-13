@@ -109,10 +109,9 @@ impl Agent for NewsHybrid {
                 };
 
                 return Ok(breakout_actions.with_action(market_id, Action::MarketClose(close_cmd)));
-            } else {
-                // No conflict, just execute breakout
-                return Ok(breakout_actions);
             }
+            // No conflict, just execute breakout
+            return Ok(breakout_actions);
         }
 
         // === PRIORITY 2: Fade Signal ===
@@ -130,10 +129,9 @@ impl Agent for NewsHybrid {
             {
                 // Breakout dominates. Ignore Fade signal.
                 return Ok(Actions::no_op());
-            } else {
-                // No conflict, execute fade
-                return Ok(fade_actions);
             }
+            // No conflict, execute fade
+            return Ok(fade_actions);
         }
 
         // === Default ===

@@ -169,12 +169,12 @@ impl Agent for UsOpenReversalAgent {
                 let symbol = &self.ohlcv_id.symbol;
 
                 let low_ticks = symbol.price_to_ticks(session.low);
-                let long_sl = symbol.ticks_to_price(Tick(low_ticks.0 - self.sl_ticks as i64));
-                let long_tp = symbol.ticks_to_price(Tick(low_ticks.0 + self.tp_ticks as i64));
+                let long_sl = symbol.ticks_to_price(Tick(low_ticks.0 - i64::from(self.sl_ticks)));
+                let long_tp = symbol.ticks_to_price(Tick(low_ticks.0 + i64::from(self.tp_ticks)));
 
                 let high_ticks = symbol.price_to_ticks(session.high);
-                let short_sl = symbol.ticks_to_price(Tick(high_ticks.0 + self.sl_ticks as i64));
-                let short_tp = symbol.ticks_to_price(Tick(high_ticks.0 - self.tp_ticks as i64));
+                let short_sl = symbol.ticks_to_price(Tick(high_ticks.0 + i64::from(self.sl_ticks)));
+                let short_tp = symbol.ticks_to_price(Tick(high_ticks.0 - i64::from(self.tp_ticks)));
 
                 Actions::from(vec![
                     (
@@ -268,13 +268,13 @@ pub struct UsOpenReversalAgentGrid {
 }
 
 impl UsOpenReversalAgentGrid {
-    pub fn baseline(root: FutureRoot) -> ChapatyResult<Self> {
-        Ok(Self {
+    pub fn baseline(root: FutureRoot) -> Self {
+        Self {
             root,
             sl_ticks: (10..=50).step_by(5).collect(),
             tp_ticks: (20..=100).step_by(5).collect(),
             max_hold_mins: (30..=90).step_by(10).collect(),
-        })
+        }
     }
 
     pub fn build(self) -> Vec<(usize, UsOpenReversalAgent)> {
@@ -288,7 +288,7 @@ impl UsOpenReversalAgentGrid {
                     UsOpenReversalAgent::new(root)
                         .with_sl_ticks(sl)
                         .with_tp_ticks(tp)
-                        .with_max_hold_mins(hold as i64),
+                        .with_max_hold_mins(i64::from(hold)),
                 )
             })
             .collect()
@@ -299,7 +299,7 @@ impl UsOpenReversalAgentGrid {
 // Market Data
 // ================================================================================================
 
-fn m1_id(root: FutureRoot) -> OhlcvId {
+const fn m1_id(root: FutureRoot) -> OhlcvId {
     OhlcvId {
         broker: DataBroker::NinjaTrader,
         exchange: Exchange::Cme,

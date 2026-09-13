@@ -100,12 +100,12 @@ pub struct NewsBreakout {
     /// ```
     ///
     /// # Examples
-    /// Long trade: entry = 100, stop-loss = 95, risk_reward_ratio = 0.5
+    /// Long trade: entry = 100, stop-loss = 95, `risk_reward_ratio` = 0.5
     /// ```text
     /// take_profit = 100 + (100 - 95) / 0.5 = 110
     /// ```
     ///
-    /// Short trade: entry = 100, stop-loss = 105, risk_reward_ratio = 2.0
+    /// Short trade: entry = 100, stop-loss = 105, `risk_reward_ratio` = 2.0
     /// ```text
     /// take_profit = 100 - (100 - 105) / 2.0 = 97.5
     /// ```
@@ -149,25 +149,25 @@ impl NewsBreakout {
         }
     }
 
-    pub fn ohlcv_id(&self) -> OhlcvId {
+    pub const fn ohlcv_id(&self) -> OhlcvId {
         self.ohlcv_id
     }
 
-    pub fn with_earliest_entry_candle(self, duration: Duration) -> Self {
+    pub const fn with_earliest_entry_candle(self, duration: Duration) -> Self {
         Self {
             earliest_entry: duration,
             ..self
         }
     }
 
-    pub fn with_latest_entry_candle(self, duration: Duration) -> Self {
+    pub const fn with_latest_entry_candle(self, duration: Duration) -> Self {
         Self {
             latest_entry: duration,
             ..self
         }
     }
 
-    pub fn with_stop_loss_risk_factor(self, factor: f64) -> Self {
+    pub const fn with_stop_loss_risk_factor(self, factor: f64) -> Self {
         Self {
             stop_loss_risk_factor: factor,
             ..self
@@ -205,14 +205,14 @@ impl NewsBreakout {
 
         match news_candle.direction() {
             CandleDirection::Bearish => {
-                let price = close + body_size * self.stop_loss_risk_factor;
+                let price = body_size.mul_add(self.stop_loss_risk_factor, close);
                 Some(StopLossTarget {
                     stop_loss_price: Price(price),
                     trade_type: TradeKind::Short,
                 })
             }
             CandleDirection::Bullish => {
-                let price = close - body_size * self.stop_loss_risk_factor;
+                let price = body_size.mul_add(-self.stop_loss_risk_factor, close);
                 Some(StopLossTarget {
                     stop_loss_price: Price(price),
                     trade_type: TradeKind::Long,
@@ -235,7 +235,7 @@ impl Agent for NewsBreakout {
         }
 
         // === 1. Update phase ===
-        if let NewsPhase::AwaitingNews = self.phase
+        if matches!(self.phase, NewsPhase::AwaitingNews)
             && let Some(news_event) = obs.market_view.economic_news().last_event(&economic_cal_id)
         {
             let news_candle_candidate = obs
@@ -251,13 +251,11 @@ impl Agent for NewsBreakout {
         }
 
         // === 2. Decide action ==
-        let (news_time, candle) = if let NewsPhase::PostNews {
+        let NewsPhase::PostNews {
             news_time,
             news_candle: Some(candle),
         } = self.phase
-        {
-            (news_time, candle)
-        } else {
+        else {
             self.phase = NewsPhase::AwaitingNews;
             return Ok(Actions::no_op());
         };
@@ -281,12 +279,9 @@ impl Agent for NewsBreakout {
             return Ok(Actions::no_op()); // no breakout
         }
 
-        let sl_target = match self.stop_loss_target(&candle) {
-            Some(tp) => tp,
-            None => {
-                self.phase = NewsPhase::AwaitingNews;
-                return Ok(Actions::no_op());
-            }
+        let Some(sl_target) = self.stop_loss_target(&candle) else {
+            self.phase = NewsPhase::AwaitingNews;
+            return Ok(Actions::no_op());
         };
 
         // 2. Generate Unique ID
@@ -397,7 +392,11 @@ impl NewsBreakoutGrid {
     }
 
     /// Overrides the range of earliest entry times. Range is `[start, end)`.
-    pub fn with_earliest_entry_range(self, start: Duration, end: Duration) -> Self {
+    #[expect(
+        dead_code,
+        reason = "public grid-override API for callers customizing the search space"
+    )]
+    pub const fn with_earliest_entry_range(self, start: Duration, end: Duration) -> Self {
         Self {
             earliest_entry: (start, end),
             ..self
@@ -405,7 +404,11 @@ impl NewsBreakoutGrid {
     }
 
     /// Overrides the range of latest entry times. Range is `[start, end)`.
-    pub fn with_latest_entry_range(self, start: Duration, end: Duration) -> Self {
+    #[expect(
+        dead_code,
+        reason = "public grid-override API for callers customizing the search space"
+    )]
+    pub const fn with_latest_entry_range(self, start: Duration, end: Duration) -> Self {
         Self {
             latest_entry: (start, end),
             ..self
@@ -413,7 +416,11 @@ impl NewsBreakoutGrid {
     }
 
     /// Overrides the stop-loss risk factor range. Range is `[start, end)`.
-    pub fn with_stop_loss_risk_factor(self, axis: GridAxis) -> Self {
+    #[expect(
+        dead_code,
+        reason = "public grid-override API for callers customizing the search space"
+    )]
+    pub const fn with_stop_loss_risk_factor(self, axis: GridAxis) -> Self {
         Self {
             stop_loss_risk_factor: axis,
             ..self
@@ -421,13 +428,21 @@ impl NewsBreakoutGrid {
     }
 
     /// Overrides the risk reward ratio range. Range is `[start, end)`.
-    pub fn with_risk_reward_ratio(self, axis: GridAxis) -> Self {
+    #[expect(
+        dead_code,
+        reason = "public grid-override API for callers customizing the search space"
+    )]
+    pub const fn with_risk_reward_ratio(self, axis: GridAxis) -> Self {
         Self {
             risk_reward_ratio: axis,
             ..self
         }
     }
 
+    #[expect(
+        clippy::expect_used,
+        reason = "risk_reward_ratio grid axis is always > 0.0 by construction"
+    )]
     pub fn build(self) -> Vec<(usize, NewsBreakout)> {
         let (start_earliest, end_earliest) = self.earliest_entry;
         let (start_latest, end_latest) = self.latest_entry;
@@ -475,7 +490,7 @@ impl NewsBreakoutGrid {
 // Market Data
 // ================================================================================================
 
-fn default_ohlcv_id() -> OhlcvId {
+const fn default_ohlcv_id() -> OhlcvId {
     OhlcvId {
         broker: DataBroker::NinjaTrader,
         exchange: Exchange::Cme,
@@ -488,7 +503,7 @@ fn default_ohlcv_id() -> OhlcvId {
     }
 }
 
-fn default_economic_cal_id() -> EconomicCalendarId {
+const fn default_economic_cal_id() -> EconomicCalendarId {
     EconomicCalendarId {
         broker: DataBroker::InvestingCom,
         data_source: None,

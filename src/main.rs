@@ -108,7 +108,7 @@ async fn run() -> Result<()> {
             backtest(
                 &mut UsOpenReversalAgent::env(root).await?,
                 UsOpenReversalAgent::new(root),
-                UsOpenReversalAgentGrid::baseline(root)?.build(),
+                UsOpenReversalAgentGrid::baseline(root).build(),
             )
             .await
         }

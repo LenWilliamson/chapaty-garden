@@ -158,18 +158,18 @@ impl NewsFade {
         }
     }
 
-    pub fn ohlcv_id(&self) -> OhlcvId {
+    pub const fn ohlcv_id(&self) -> OhlcvId {
         self.ohlcv_id
     }
 
-    pub fn with_candles_after_news(self, duration: Duration) -> Self {
+    pub const fn with_candles_after_news(self, duration: Duration) -> Self {
         Self {
             wait_duration: duration,
             ..self
         }
     }
 
-    pub fn with_take_profit_risk_factor(self, factor: f64) -> Self {
+    pub const fn with_take_profit_risk_factor(self, factor: f64) -> Self {
         Self {
             take_profit_risk_factor: factor,
             ..self
@@ -207,14 +207,14 @@ impl NewsFade {
 
         match news_candle.direction() {
             CandleDirection::Bearish => {
-                let price = close + body_size * self.take_profit_risk_factor;
+                let price = body_size.mul_add(self.take_profit_risk_factor, close);
                 Some(TakeProfitTarget {
                     take_profit_price: Price(price),
                     trade_type: TradeKind::Long,
                 })
             }
             CandleDirection::Bullish => {
-                let price = close - body_size * self.take_profit_risk_factor;
+                let price = body_size.mul_add(-self.take_profit_risk_factor, close);
                 Some(TakeProfitTarget {
                     take_profit_price: Price(price),
                     trade_type: TradeKind::Short,
@@ -235,7 +235,7 @@ impl Agent for NewsFade {
         }
 
         // === 1. Update Phase ===
-        if let NewsPhase::AwaitingNews = self.phase
+        if matches!(self.phase, NewsPhase::AwaitingNews)
             && let Some(news_event) = obs
                 .market_view
                 .economic_news()
@@ -260,13 +260,11 @@ impl Agent for NewsFade {
         }
 
         // === 2. Decision Phase ===
-        let (news_time, candle) = if let NewsPhase::PostNews {
+        let NewsPhase::PostNews {
             news_time,
             news_candle: Some(candle),
         } = self.phase
-        {
-            (news_time, candle)
-        } else {
+        else {
             // Candle not found yet?
             // We simply revert to Awaiting to retry the fetch in step 1.
             self.phase = NewsPhase::AwaitingNews;
@@ -279,15 +277,12 @@ impl Agent for NewsFade {
         }
 
         // === 3. Execution Phase ===
-        let tp_target = match self.take_profit_target(&candle) {
-            Some(tp) => tp,
-            None => {
-                // Invalid candle (Doji) -> Mark news as processed so we don't
-                // retry forever
-                self.last_processed_news = Some(news_time);
-                self.phase = NewsPhase::AwaitingNews;
-                return Ok(Actions::no_op());
-            }
+        let Some(tp_target) = self.take_profit_target(&candle) else {
+            // Invalid candle (Doji) -> Mark news as processed so we don't
+            // retry forever
+            self.last_processed_news = Some(news_time);
+            self.phase = NewsPhase::AwaitingNews;
+            return Ok(Actions::no_op());
         };
 
         self.trade_counter += 1;
@@ -357,8 +352,8 @@ impl TakeProfitTarget {
         let entry = entry_price.0;
 
         let sl = match self.trade_type {
-            TradeKind::Long => entry - (tp - entry) * risk_reward_ratio,
-            TradeKind::Short => entry + (entry - tp) * risk_reward_ratio,
+            TradeKind::Long => (tp - entry).mul_add(-risk_reward_ratio, entry),
+            TradeKind::Short => (entry - tp).mul_add(risk_reward_ratio, entry),
         };
 
         Price(sl)
@@ -394,7 +389,11 @@ impl NewsFadeGrid {
 
     /// Overrides the range of candles to consider after a news event.
     /// Range is `[start, end)`.
-    pub fn with_candles_after_news(self, start: Duration, end: Duration) -> Self {
+    #[expect(
+        dead_code,
+        reason = "public grid-override API for callers customizing the search space"
+    )]
+    pub const fn with_candles_after_news(self, start: Duration, end: Duration) -> Self {
         Self {
             wait_duration: (start, end),
             ..self
@@ -403,7 +402,11 @@ impl NewsFadeGrid {
 
     /// Overrides the take-profit risk factor parameter range.
     /// Range is `[start, end)`.
-    pub fn with_take_profit_risk_factor(self, axis: GridAxis) -> Self {
+    #[expect(
+        dead_code,
+        reason = "public grid-override API for callers customizing the search space"
+    )]
+    pub const fn with_take_profit_risk_factor(self, axis: GridAxis) -> Self {
         Self {
             tp_risk_factor: axis,
             ..self
@@ -412,13 +415,21 @@ impl NewsFadeGrid {
 
     /// Overrides the risk reward ratio parameter range.
     /// Range is `[start, end)`.
-    pub fn with_risk_reward_ratio(self, axis: GridAxis) -> Self {
+    #[expect(
+        dead_code,
+        reason = "public grid-override API for callers customizing the search space"
+    )]
+    pub const fn with_risk_reward_ratio(self, axis: GridAxis) -> Self {
         Self {
             risk_reward: axis,
             ..self
         }
     }
 
+    #[expect(
+        clippy::expect_used,
+        reason = "risk_reward_ratio grid axis is always > 0.0 by construction"
+    )]
     pub fn build(self) -> Vec<(usize, NewsFade)> {
         let (start_wait, end_wait) = self.wait_duration;
 
@@ -454,7 +465,7 @@ impl NewsFadeGrid {
 // Market Data
 // ================================================================================================
 
-fn default_ohlcv_id() -> OhlcvId {
+const fn default_ohlcv_id() -> OhlcvId {
     OhlcvId {
         broker: DataBroker::NinjaTrader,
         exchange: Exchange::Cme,
@@ -467,7 +478,7 @@ fn default_ohlcv_id() -> OhlcvId {
     }
 }
 
-fn default_economic_cal_id() -> EconomicCalendarId {
+const fn default_economic_cal_id() -> EconomicCalendarId {
     EconomicCalendarId {
         broker: DataBroker::InvestingCom,
         data_source: None,

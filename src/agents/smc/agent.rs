@@ -27,8 +27,8 @@ enum SetupPhase {
 }
 
 impl SetupPhase {
-    fn is_done_for_day(&self) -> bool {
-        matches!(self, SetupPhase::DoneForDay)
+    const fn is_done_for_day(&self) -> bool {
+        matches!(self, Self::DoneForDay)
     }
 }
 
@@ -40,7 +40,7 @@ impl SetupPhase {
 /// Long only).
 ///
 /// Logic:
-/// 1. `StreamingHhll` (OpenClose) detects bullish BOS or CHoCH on M15.
+/// 1. `StreamingHhll` (`OpenClose`) detects bullish BOS or `CHoCH` on M15.
 /// 2. If active bullish FVGs exist from the current movement → Limit-Order at
 ///    the midpoint of the highest FVG (by midpoint price).
 /// 3. SL = LOW(candle at `fvg.creation_index() − 3`) − 1 tick i.e. the candle
@@ -170,6 +170,10 @@ impl Agent for FlorianFvgAgent {
         self.trade_counter = 0;
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the state machine reads clearer kept in one function than split across several"
+    )]
     fn act(&mut self, obs: Observation) -> ChapatyResult<Actions> {
         let Some(candle) = obs.market_view.ohlcv().last_event(&self.m15_id) else {
             return Ok(Actions::no_op());
@@ -195,7 +199,7 @@ impl Agent for FlorianFvgAgent {
 
         // 22:00 Berlin = 21:00 UTC (CET) / 20:00 UTC (CEST)
         if berlin_now.hour() >= 22 && self.setup_phase.is_done_for_day() {
-            return self.handle_timeout(&obs);
+            return Ok(self.handle_timeout(&obs));
         }
 
         if self.setup_phase.is_done_for_day() {
@@ -207,8 +211,7 @@ impl Agent for FlorianFvgAgent {
             let is_filled = obs
                 .states
                 .find_active_trade_for_agent(&self.agent_id)
-                .map(|(_, t)| t.trade_id() == trade_id)
-                .unwrap_or(false);
+                .is_some_and(|(_, t)| t.trade_id() == trade_id);
 
             if is_filled {
                 self.setup_phase = SetupPhase::InTrade { trade_id };
@@ -217,11 +220,7 @@ impl Agent for FlorianFvgAgent {
 
         // ── If InTrade: maintain HHLL/FVG state but wait for TP/SL ──────────
         if let SetupPhase::InTrade { .. } = self.setup_phase {
-            if !obs.states.any_active_trade_for_agent(&self.identifier()) {
-                self.setup_phase = SetupPhase::Scanning;
-                // Fall through to update indicators and react to any
-                // simultaneous event
-            } else {
+            if obs.states.any_active_trade_for_agent(&self.identifier()) {
                 let m15_index = obs.market_view.ohlcv().len(&self.m15_id).saturating_sub(1);
                 self.m15_hhll.update(IndexedOhlcv {
                     index: m15_index,
@@ -233,6 +232,9 @@ impl Agent for FlorianFvgAgent {
                 });
                 return Ok(Actions::no_op());
             }
+            self.setup_phase = SetupPhase::Scanning;
+            // Fall through to update indicators and react to any
+            // simultaneous event
         }
 
         // ── Update indicators
@@ -301,7 +303,7 @@ impl Agent for FlorianFvgAgent {
                     if matches!(self.setup_phase, SetupPhase::Scanning)
                         && self.tp_extremum.is_some()
                     {
-                        self.try_place_order(fvg, slice, candle.close_timestamp)
+                        self.try_place_order(&fvg, slice, candle.close_timestamp)
                     } else {
                         None
                     }
@@ -343,9 +345,9 @@ impl FlorianFvgAgent {
                     && g.creation_index() > self.movement_start_index
             })
             .max_by(|a, b| {
-                let ma = (a.top().0 + a.bottom().0) / 2.0;
-                let mb = (b.top().0 + b.bottom().0) / 2.0;
-                ma.partial_cmp(&mb).unwrap()
+                let ma = f64::midpoint(a.top().0, a.bottom().0);
+                let mb = f64::midpoint(b.top().0, b.bottom().0);
+                ma.total_cmp(&mb)
             })
             .copied()
     }
@@ -353,14 +355,14 @@ impl FlorianFvgAgent {
     /// Places the limit order at the FVG midpoint.
     ///
     /// SL reference: the candle at `fvg.creation_index() − 3` in the market
-    /// slice. The FVG triple is [creation_index−2, creation_index−1,
-    /// creation_index], so creation_index−3 is the candle directly before
+    /// slice. The FVG triple is [`creation_index−2`, `creation_index−1`,
+    /// `creation_index`], so `creation_index−3` is the candle directly before
     /// the left FVG candle.
     fn try_place_order(
         &mut self,
-        fvg: FairValueGap<OpenState>,
+        fvg: &FairValueGap<OpenState>,
         slice: &[Ohlcv],
-        ts: DateTime<Utc>,
+        _ts: DateTime<Utc>,
     ) -> Option<Action> {
         let tp = self.tp_extremum?;
         let symbol = &self.m15_id.symbol;
@@ -369,7 +371,7 @@ impl FlorianFvgAgent {
         let sl_ref = slice.get(sl_ref_idx)?;
 
         let sl = Price(symbol.normalize_price(sl_ref.low.0 - symbol.tick_size()));
-        let entry = Price(symbol.normalize_price((fvg.top().0 + fvg.bottom().0) / 2.0));
+        let entry = Price(symbol.normalize_price(f64::midpoint(fvg.top().0, fvg.bottom().0)));
 
         if entry.0 <= sl.0 {
             return None;
@@ -391,7 +393,7 @@ impl FlorianFvgAgent {
     }
 
     /// Closes the active trade or cancels the pending order at daily timeout.
-    fn handle_timeout(&mut self, obs: &Observation) -> ChapatyResult<Actions> {
+    fn handle_timeout(&mut self, obs: &Observation) -> Actions {
         let mut cmds: Vec<(MarketId, Action)> = Vec::new();
 
         match self.setup_phase {
@@ -424,9 +426,9 @@ impl FlorianFvgAgent {
         self.setup_phase = SetupPhase::DoneForDay;
 
         if cmds.is_empty() {
-            Ok(Actions::no_op())
+            Actions::no_op()
         } else {
-            Ok(Actions::from(cmds))
+            Actions::from(cmds)
         }
     }
 }
@@ -447,7 +449,7 @@ impl FlorianFvgAgentGrid {
 // Market Data
 // ================================================================================================
 
-fn m15_id() -> OhlcvId {
+const fn m15_id() -> OhlcvId {
     OhlcvId {
         broker: DataBroker::NinjaTrader,
         exchange: Exchange::Cme,
