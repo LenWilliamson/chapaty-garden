@@ -1,3 +1,4 @@
+use anyhow::{Context, Result};
 use chapaty::prelude::*;
 use chrono::{DateTime, Duration, Utc};
 use itertools::iproduct;
@@ -127,6 +128,10 @@ impl NewsFade {
             .await
             .context("Failed to load trading environment")
     }
+    pub fn new() -> Self {
+        Self::baseline(default_economic_cal_id(), default_ohlcv_id())
+    }
+
     pub fn baseline(economic_cal_id: EconomicCalendarId, ohlcv_id: OhlcvId) -> Self {
         Self {
             economic_cal_id,
@@ -281,7 +286,7 @@ impl Agent for NewsFade {
         let cmd = OpenCmd {
             agent_id: self.identifier(),
             trade_id,
-            trade_type: tp_target.trade_type,
+            trade_kind: tp_target.trade_type,
             quantity,
             entry_price: None,
             stop_loss: Some(tp_target.stop_loss_price(estimated_entry, self.risk_reward_ratio)),
@@ -363,10 +368,10 @@ impl NewsFadeGrid {
     ///
     /// This pre-populates the ranges with standard values, ensuring the grid
     /// is valid immediately.
-    pub fn baseline(cal_id: EconomicCalendarId, ohlcv_id: OhlcvId) -> ChapatyResult<Self> {
+    pub fn baseline() -> ChapatyResult<Self> {
         Ok(Self {
-            cal_id,
-            ohlcv_id,
+            cal_id: default_economic_cal_id(),
+            ohlcv_id: default_ohlcv_id(),
             wait_duration: (Duration::minutes(5), Duration::minutes(30)),
             tp_risk_factor: GridAxis::new("0.5", "3.0", "0.01")?,
             risk_reward: GridAxis::new("0.1", "1.0", "0.01")?,
@@ -428,5 +433,32 @@ impl NewsFadeGrid {
                 )
             })
             .collect::<Vec<_>>()
+    }
+}
+
+// ================================================================================================
+// Market Data
+// ================================================================================================
+
+fn default_ohlcv_id() -> OhlcvId {
+    OhlcvId {
+        broker: DataBroker::NinjaTrader,
+        exchange: Exchange::Cme,
+        symbol: Symbol::Future(FutureContract {
+            root: FutureRoot::EurUsd,
+            month: ContractMonth::September,
+            year: ContractYear::Y6,
+        }),
+        period: Period::Minute(1),
+    }
+}
+
+fn default_economic_cal_id() -> EconomicCalendarId {
+    EconomicCalendarId {
+        broker: DataBroker::InvestingCom,
+        data_source: None,
+        country_code: Some(CountryCode::Us),
+        category: Some(EconomicCategory::Employment),
+        importance: Some(EconomicEventImpact::High),
     }
 }

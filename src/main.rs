@@ -8,6 +8,11 @@ use strum::{AsRefStr, Display, EnumString};
 
 use crate::agents::{
     demo::{DemoAgent, DemoAgentGrid},
+    news::{
+        NewsBreakout, NewsBreakoutGrid, NewsFade, NewsFadeGrid, NewsHybrid, NewsHybridGrid,
+    },
+    overnight::{UsOpenReversalAgent, UsOpenReversalAgentGrid},
+    smc::{FlorianFvgAgent, FlorianFvgAgentGrid},
 };
 
 mod agents;
@@ -68,15 +73,62 @@ async fn run() -> Result<()> {
             )
             .await
         }
-        ActiveAgent::Template => {
+        ActiveAgent::NewsBreakout => {
             backtest(
-                &mut TemplateAgent::env().await?,
-                TemplateAgent::new(),
-                TemplateAgentGrid::baseline()?.build(),
+                &mut NewsBreakout::env().await?,
+                NewsBreakout::new(),
+                NewsBreakoutGrid::baseline()?.build(),
+            )
+            .await
+        }
+        ActiveAgent::NewsFade => {
+            backtest(
+                &mut NewsFade::env().await?,
+                NewsFade::new(),
+                NewsFadeGrid::baseline()?.build(),
+            )
+            .await
+        }
+        ActiveAgent::NewsHybrid => {
+            backtest(
+                &mut NewsHybrid::env().await?,
+                NewsHybrid::new(),
+                NewsHybridGrid::baseline()?.build(),
+            )
+            .await
+        }
+        ActiveAgent::FairValueGap => {
+            backtest(
+                &mut FlorianFvgAgent::env().await?,
+                FlorianFvgAgent::new(),
+                FlorianFvgAgentGrid::build(),
+            )
+            .await
+        }
+        ActiveAgent::Overnight => {
+            let root = FutureRoot::EminiSp500;
+            backtest(
+                &mut UsOpenReversalAgent::env(root).await?,
+                UsOpenReversalAgent::new(root),
+                UsOpenReversalAgentGrid::baseline(root)?.build(),
             )
             .await
         }
     }
+}
+
+/// Builds a [`DataSource::SelfHosted`] pointing at a self-hosted gRPC endpoint,
+/// configured via `CHAPATY_GRPC_ENDPOINT` and `CHAPATY_CREDENTIAL` env vars.
+fn self_hosted_source() -> DataSource {
+    let endpoint = std::env::var("CHAPATY_GRPC_ENDPOINT")
+        .unwrap_or_else(|_| "http://localhost:50051".to_string());
+    let credential = std::env::var("CHAPATY_CREDENTIAL").ok();
+
+    DataSource::SelfHosted(DefaultGrpcEndpoint {
+        endpoint: EndpointUrl::from(endpoint),
+        credential: credential.map(Credential::from),
+        metadata_key: None,
+    })
 }
 
 /// Runs a baseline backtest followed by a parallel grid search.

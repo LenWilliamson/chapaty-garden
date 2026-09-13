@@ -1,3 +1,4 @@
+use anyhow::{Context, Result};
 use chapaty::prelude::*;
 use chrono::Duration;
 use itertools::iproduct;
@@ -116,6 +117,10 @@ impl NewsBreakout {
             .context("Failed to load trading environment")
     }
     
+    pub fn new() -> Self {
+        Self::baseline(default_economic_cal_id(), default_ohlcv_id())
+    }
+
     pub fn baseline(economic_cal_id: EconomicCalendarId, ohlcv_id: OhlcvId) -> Self {
         Self {
             economic_cal_id,
@@ -280,7 +285,7 @@ impl Agent for NewsBreakout {
         let cmd = OpenCmd {
             agent_id: self.identifier(),
             trade_id,
-            trade_type: sl_target.trade_type,
+            trade_kind: sl_target.trade_type,
             quantity,
 
             // EXECUTION: Market Order (None)
@@ -365,10 +370,10 @@ pub struct NewsBreakoutGrid {
 
 impl NewsBreakoutGrid {
     /// Creates a grid generator with a default "Baseline" search space.
-    pub fn baseline(cal_id: EconomicCalendarId, market_id: OhlcvId) -> ChapatyResult<Self> {
+    pub fn baseline() -> ChapatyResult<Self> {
         Ok(Self {
-            cal_id,
-            market_id,
+            cal_id: default_economic_cal_id(),
+            market_id: default_ohlcv_id(),
             earliest_entry: (Duration::minutes(1), Duration::minutes(6)),
             latest_entry: (Duration::minutes(20), Duration::minutes(28)),
             stop_loss_risk_factor: GridAxis::new("0.5", "1.5", "0.01")?,
@@ -448,5 +453,32 @@ impl NewsBreakoutGrid {
             )
         })
         .collect::<Vec<_>>()
+    }
+}
+
+// ================================================================================================
+// Market Data
+// ================================================================================================
+
+fn default_ohlcv_id() -> OhlcvId {
+    OhlcvId {
+        broker: DataBroker::NinjaTrader,
+        exchange: Exchange::Cme,
+        symbol: Symbol::Future(FutureContract {
+            root: FutureRoot::EurUsd,
+            month: ContractMonth::September,
+            year: ContractYear::Y6,
+        }),
+        period: Period::Minute(1),
+    }
+}
+
+fn default_economic_cal_id() -> EconomicCalendarId {
+    EconomicCalendarId {
+        broker: DataBroker::InvestingCom,
+        data_source: None,
+        country_code: Some(CountryCode::Us),
+        category: Some(EconomicCategory::Employment),
+        importance: Some(EconomicEventImpact::High),
     }
 }

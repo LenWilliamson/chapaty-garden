@@ -1,3 +1,4 @@
+use anyhow::{Context, Result};
 use chapaty::prelude::*;
 use itertools::iproduct;
 use serde::Serialize;
@@ -69,6 +70,13 @@ impl NewsHybrid {
         chapaty::load(preset, &cfg)
             .await
             .context("Failed to load trading environment")
+    }
+
+    pub fn new() -> Self {
+        Self {
+            breakout: NewsBreakout::new(),
+            fade: NewsFade::new(),
+        }
     }
 }
 
@@ -151,6 +159,14 @@ pub struct NewsHybridGrid {
 }
 
 impl NewsHybridGrid {
+    /// Creates a grid generator with a default "Baseline" search space.
+    pub fn baseline() -> ChapatyResult<Self> {
+        Ok(Self {
+            fade: NewsFadeGrid::baseline()?,
+            breakout: NewsBreakoutGrid::baseline()?,
+        })
+    }
+
     pub fn build(self) -> Vec<(usize, NewsHybrid)> {
         let breakout_agents = self.breakout.build();
         let fade_agents = self.fade.build();

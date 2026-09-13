@@ -5,7 +5,6 @@ use chapaty::prelude::*;
 use chrono::{DateTime, NaiveDate, Timelike, Utc};
 use chrono_tz::Europe::Berlin;
 use serde::Serialize;
-use tracing::info;
 
 use crate::self_hosted_source;
 
@@ -208,18 +207,12 @@ impl Agent for FlorianFvgAgent {
 
             if is_filled {
                 self.setup_phase = SetupPhase::InTrade { trade_id };
-                info!(
-                    ts = %candle.close_timestamp,
-                    trade_id = trade_id.0,
-                    "Limit order filled — InTrade"
-                );
             }
         }
 
         // ── If InTrade: maintain HHLL/FVG state but wait for TP/SL ──────────
         if let SetupPhase::InTrade { .. } = self.setup_phase {
             if !obs.states.any_active_trade_for_agent(&self.identifier()) {
-                info!(ts = %candle.close_timestamp, "Trade closed (TP/SL hit) — Scanning");
                 self.setup_phase = SetupPhase::Scanning;
                 // Fall through to update indicators and react to any simultaneous event
             } else {
@@ -262,12 +255,6 @@ impl Agent for FlorianFvgAgent {
                 self.tp_extremum = Some(match self.tp_extremum {
                     Some(curr) if curr.0 >= pivot.price.0 => curr,
                     _ => {
-                        info!(
-                            ts = %candle.close_timestamp,
-                            event = ?event,
-                            new_tp_extremum = pivot.price.0,
-                            "TP-Extremum updated"
-                        );
                         pivot.price
                     }
                 });
@@ -284,12 +271,7 @@ impl Agent for FlorianFvgAgent {
                 // Cancel any pending order (any BOS/CHoCH invalidates it)
                 let cancel_action = if let SetupPhase::OrderPending { trade_id } = self.setup_phase
                 {
-                    info!(
-                        ts = %candle.close_timestamp,
-                        trade_id = trade_id.0,
-                        event = ?event,
-                        "Pending order invalidated — cancelling"
-                    );
+
                     self.setup_phase = SetupPhase::Scanning;
                     Some(Action::Cancel(CancelCmd {
                         agent_id: self.identifier(),
@@ -380,7 +362,6 @@ impl FlorianFvgAgent {
         let entry = Price(symbol.normalize_price((fvg.top().0 + fvg.bottom().0) / 2.0));
 
         if entry.0 <= sl.0 {
-            info!(ts = %ts, entry = entry.0, sl = sl.0, "Order skipped: entry <= SL");
             return None;
         }
 
@@ -388,24 +369,11 @@ impl FlorianFvgAgent {
         let trade_id = TradeId(self.trade_counter);
         self.setup_phase = SetupPhase::OrderPending { trade_id };
 
-        info!(
-            ts = %ts,
-            direction = "Long",
-            entry = entry.0,
-            sl = sl.0,
-            tp = tp.0,
-            fvg_top = fvg.top().0,
-            fvg_bottom = fvg.bottom().0,
-            fvg_creation_index = fvg.creation_index(),
-            sl_ref_low = sl_ref.low.0,
-            trade_id = trade_id.0,
-            "Placing limit order"
-        );
 
         Some(Action::Open(OpenCmd {
             agent_id: self.identifier(),
             trade_id,
-            trade_type: TradeKind::Long,
+            trade_kind: TradeKind::Long,
             quantity: Quantity(self.trade_qty),
             entry_price: Some(entry),
             stop_loss: Some(sl),
@@ -419,10 +387,7 @@ impl FlorianFvgAgent {
 
         match self.setup_phase {
             SetupPhase::OrderPending { trade_id } => {
-                info!(
-                    trade_id = trade_id.0,
-                    "Daily timeout — cancelling pending order"
-                );
+
                 cmds.push((
                     self.m15_id.into(),
                     Action::Cancel(CancelCmd {
@@ -435,10 +400,7 @@ impl FlorianFvgAgent {
                 if let Some((_, active_trade)) =
                     obs.states.find_active_trade_for_agent(&self.agent_id)
                 {
-                    info!(
-                        trade_id = active_trade.trade_id().0,
-                        "Daily timeout — closing trade at market"
-                    );
+
                     cmds.push((
                         self.m15_id.into(),
                         Action::MarketClose(MarketCloseCmd {

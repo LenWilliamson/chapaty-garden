@@ -4,7 +4,6 @@ use chrono::{DateTime, Utc};
 use itertools::iproduct;
 use serde::Serialize;
 use std::{collections::BTreeSet, sync::Arc};
-use tracing::info;
 
 use crate::self_hosted_source;
 
@@ -152,15 +151,6 @@ impl Agent for UsOpenReversalAgent {
                     return Ok(Actions::no_op());
                 }
 
-                info!(
-                    trading_date = %session.session.0,
-                    session_open = %session.open_timestamp,
-                    session_close = %session.close_timestamp,
-                    overnight_high = session.high.0,
-                    overnight_low = session.low.0,
-                    "Overnight range established"
-                );
-
                 self.trade_counter += 1;
                 let long_trade_id = TradeId(self.trade_counter);
                 self.trade_counter += 1;
@@ -187,7 +177,7 @@ impl Agent for UsOpenReversalAgent {
                         Action::Open(OpenCmd {
                             agent_id: self.identifier(),
                             trade_id: long_trade_id,
-                            trade_type: TradeKind::Long,
+                            trade_kind: TradeKind::Long,
                             quantity: Quantity(self.trade_qty),
                             entry_price: Some(session.low),
                             stop_loss: Some(long_sl),
@@ -199,7 +189,7 @@ impl Agent for UsOpenReversalAgent {
                         Action::Open(OpenCmd {
                             agent_id: self.identifier(),
                             trade_id: short_trade_id,
-                            trade_type: TradeKind::Short,
+                            trade_kind: TradeKind::Short,
                             quantity: Quantity(self.trade_qty),
                             entry_price: Some(session.high),
                             stop_loss: Some(short_sl),
