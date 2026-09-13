@@ -1,36 +1,36 @@
+use std::sync::Arc;
+
 use anyhow::{Context, Result};
 use chapaty::prelude::*;
 use itertools::iproduct;
 use serde::Serialize;
-use std::sync::Arc;
 
 use crate::agents::news::{NewsBreakout, NewsBreakoutGrid, NewsFade, NewsFadeGrid};
 
 /// A decision agent that coordinates between [`NewsFade`] and
 /// [`NewsBreakout`] strategies.
 ///
-/// This agent implements a **priority policy** for handling overlapping signals:
+/// This agent implements a **priority policy** for handling overlapping
+/// signals:
 ///
 /// # Policy
-/// - **Breakout-first (or simultaneous):**
-///   If [`NewsBreakout`] produces an entry signal before (or at the same
-///   step as) [`NewsFade`], the breakout signal is executed and the fade
-///   signal is ignored.
-/// - **Fade-first, then Breakout:**
-///   If [`NewsFade`] produces a signal first, the fade trade is opened.
-///   If a breakout signal occurs afterwards, the fade trade is closed and replaced
-///   with the breakout trade (“pivot”).
-/// - **Fade-only:**
-///   If only [`NewsFade`] signals, its trade is executed and maintained.
-/// - **Breakout-only:**
-///   If only [`NewsBreakout`] signals, its trade is executed.
-/// - **Otherwise:**
-///   The agent performs [`Actions::no_op`].
+/// - **Breakout-first (or simultaneous):** If [`NewsBreakout`] produces an
+///   entry signal before (or at the same step as) [`NewsFade`], the breakout
+///   signal is executed and the fade signal is ignored.
+/// - **Fade-first, then Breakout:** If [`NewsFade`] produces a signal first,
+///   the fade trade is opened. If a breakout signal occurs afterwards, the fade
+///   trade is closed and replaced with the breakout trade (“pivot”).
+/// - **Fade-only:** If only [`NewsFade`] signals, its trade is executed and
+///   maintained.
+/// - **Breakout-only:** If only [`NewsBreakout`] signals, its trade is
+///   executed.
+/// - **Otherwise:** The agent performs [`Actions::no_op`].
 ///
 /// # Motivation
 /// The policy reflects the assumption that a breakout move carries stronger
 /// informational value than a mean-reversion fade. Breakout signals therefore
-/// dominate whenever they appear, even retroactively displacing an open fade trade.
+/// dominate whenever they appear, even retroactively displacing an open fade
+/// trade.
 ///
 /// # Example Timeline
 /// ```text
@@ -118,8 +118,9 @@ impl Agent for NewsHybrid {
         // === PRIORITY 2: Fade Signal ===
         if any_fade_signal {
             // Dominance Check:
-            // If the BREAKOUT agent is already in a trade, ignore the fade signal.
-            // Breakout trades are "stronger" and shouldn't be interrupted by a fade.
+            // If the BREAKOUT agent is already in a trade, ignore the fade
+            // signal. Breakout trades are "stronger" and shouldn't
+            // be interrupted by a fade.
             let breakout_id = self.breakout.identifier();
 
             if obs

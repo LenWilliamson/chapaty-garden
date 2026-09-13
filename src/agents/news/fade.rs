@@ -1,10 +1,11 @@
+use std::sync::Arc;
+
 use anyhow::{Context, Result};
 use chapaty::prelude::*;
 use chrono::{DateTime, Duration, Utc};
 use itertools::iproduct;
 use serde::Serialize;
 use serde_with::{DurationSeconds, serde_as};
-use std::sync::Arc;
 
 use crate::agents::news::NewsPhase;
 
@@ -22,28 +23,37 @@ pub struct NewsFade {
     ///
     /// # Examples
     ///
-    /// - `wait_duration = Duration::zero()`: enter immediately on the news candle.
+    /// - `wait_duration = Duration::zero()`: enter immediately on the news
+    ///   candle.
     /// - `wait_duration = Duration::seconds(60)`: enter 1 minute after news.
     /// - `wait_duration = Duration::minutes(5)`: enter 5 minutes after news.
     #[serde_as(as = "DurationSeconds<i64>")]
     wait_duration: Duration,
 
-    /// A factor that defines the portion of the news candle's body to capture before a take-profit is triggered.
+    /// A factor that defines the portion of the news candle's body to capture
+    /// before a take-profit is triggered.
     ///
-    /// The calculation starts from the news candle's **close price** and moves towards
-    /// (or beyond) its **open price**. A higher value means aiming for a larger reversal move
-    /// (wider take-profit target).
+    /// The calculation starts from the news candle's **close price** and moves
+    /// towards (or beyond) its **open price**. A higher value means aiming
+    /// for a larger reversal move (wider take-profit target).
     ///
-    /// - **`-0.5`**: Take-profit is set **past the close price**, i.e. on the wrong side of the reversal.
-    /// - **`0.0`**: Take-profit at the **close price** — reversal ends exactly at the close.
-    /// - **`0.5`**: Take-profit at the **midpoint** of the candle body (captures 50% of the body).
-    /// - **`1.0`**: Take-profit at the **open price** — a full reversal of the news candle.
-    /// - **`1.5`**: Take-profit **beyond the open price**, anticipating an overshoot beyond full reversal.
+    /// - **`-0.5`**: Take-profit is set **past the close price**, i.e. on the
+    ///   wrong side of the reversal.
+    /// - **`0.0`**: Take-profit at the **close price** — reversal ends exactly
+    ///   at the close.
+    /// - **`0.5`**: Take-profit at the **midpoint** of the candle body
+    ///   (captures 50% of the body).
+    /// - **`1.0`**: Take-profit at the **open price** — a full reversal of the
+    ///   news candle.
+    /// - **`1.5`**: Take-profit **beyond the open price**, anticipating an
+    ///   overshoot beyond full reversal.
     ///
     /// # Formulas
     /// Let `body_size = |news_open - news_close|`.
-    /// - For **Long** trades (fading a bearish candle): `TakeProfit = news_close + body_size * take_profit_risk_factor`
-    /// - For **Short** trades (fading a bullish candle): `TakeProfit = news_close - body_size * take_profit_risk_factor`
+    /// - For **Long** trades (fading a bearish candle): `TakeProfit =
+    ///   news_close + body_size * take_profit_risk_factor`
+    /// - For **Short** trades (fading a bullish candle): `TakeProfit =
+    ///   news_close - body_size * take_profit_risk_factor`
     ///
     /// # Long Trade Example (Bearish News Candle: Open=100, Close=90, Body=10)
     /// - `take_profit_risk_factor = 0.0`: TP = 90
@@ -58,9 +68,10 @@ pub struct NewsFade {
 
     /// Risk-Reward Ratio (RRR) for the strategy.
     ///
-    /// The Risk-Reward Ratio defines the relationship between the potential **loss** (risk) and
-    /// the potential **gain** (reward) of a trade. It is used to calculate the **stop-loss**
-    /// level given a known entry price and take-profit price.
+    /// The Risk-Reward Ratio defines the relationship between the potential
+    /// **loss** (risk) and the potential **gain** (reward) of a trade. It
+    /// is used to calculate the **stop-loss** level given a known entry
+    /// price and take-profit price.
     ///
     /// # Formula
     /// ```text
@@ -72,12 +83,14 @@ pub struct NewsFade {
     /// ```
     ///
     /// # Interpretation
-    /// - `risk_reward_ratio > 1.0` -> risking more than potential reward (caution)
+    /// - `risk_reward_ratio > 1.0` -> risking more than potential reward
+    ///   (caution)
     /// - `risk_reward_ratio = 1.0` -> risk equals reward
     /// - `risk_reward_ratio < 1.0` -> potential reward exceeds risk (favorable)
     ///
     /// # Valid Values
-    /// Must be strictly positive (`risk_reward_ratio > 0.0`), otherwise the trade setup is invalid.
+    /// Must be strictly positive (`risk_reward_ratio > 0.0`), otherwise the
+    /// trade setup is invalid.
     ///
     /// # Stop-Loss Calculation
     /// Given a trade entry and take-profit (from `take_profit_risk_factor`):
@@ -269,7 +282,8 @@ impl Agent for NewsFade {
         let tp_target = match self.take_profit_target(&candle) {
             Some(tp) => tp,
             None => {
-                // Invalid candle (Doji) -> Mark news as processed so we don't retry forever
+                // Invalid candle (Doji) -> Mark news as processed so we don't
+                // retry forever
                 self.last_processed_news = Some(news_time);
                 self.phase = NewsPhase::AwaitingNews;
                 return Ok(Actions::no_op());

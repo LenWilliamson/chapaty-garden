@@ -36,16 +36,19 @@ impl SetupPhase {
 // Agent
 // ================================================================================================
 
-/// Florian's FVG / Smart-Money Concepts strategy on the 6E Euro FX future (M15, Long only).
+/// Florian's FVG / Smart-Money Concepts strategy on the 6E Euro FX future (M15,
+/// Long only).
 ///
 /// Logic:
 /// 1. `StreamingHhll` (OpenClose) detects bullish BOS or CHoCH on M15.
-/// 2. If active bullish FVGs exist from the current movement → Limit-Order at the midpoint of
-///    the highest FVG (by midpoint price).
-/// 3. SL = LOW(candle at `fvg.creation_index() − 3`) − 1 tick
-///    i.e. the candle directly before the left FVG candle, accessible from the market slice.
-/// 4. TP = running maximum of all confirmed bullish BOS/CHoCH pivot prices (TP-Extremum).
-/// 5. Any new BOS/CHoCH invalidates a pending order; a bullish one may immediately spawn a new order.
+/// 2. If active bullish FVGs exist from the current movement → Limit-Order at
+///    the midpoint of the highest FVG (by midpoint price).
+/// 3. SL = LOW(candle at `fvg.creation_index() − 3`) − 1 tick i.e. the candle
+///    directly before the left FVG candle, accessible from the market slice.
+/// 4. TP = running maximum of all confirmed bullish BOS/CHoCH pivot prices
+///    (TP-Extremum).
+/// 5. Any new BOS/CHoCH invalidates a pending order; a bullish one may
+///    immediately spawn a new order.
 /// 6. Open positions and pending orders are closed/cancelled at 22:00 CET/CEST.
 #[derive(Debug, Clone, Serialize)]
 pub struct FlorianFvgAgent {
@@ -58,7 +61,8 @@ pub struct FlorianFvgAgent {
     #[serde(skip)]
     m15_hhll: StreamingHhll,
     #[serde(skip)]
-    m15_fvg: StreamingFairValueGap, // with_price_source(OpenClose) → fill detection uses Open/Close
+    m15_fvg: StreamingFairValueGap, /* with_price_source(OpenClose) → fill detection uses
+                                     * Open/Close */
 
     // Index of the last BOS/CHoCH bar. FVGs with creation_index > this value belong to the
     // current movement and are candidates for entry.
@@ -177,7 +181,8 @@ impl Agent for FlorianFvgAgent {
         }
         self.last_m15_ts = Some(candle.close_timestamp);
 
-        // ── Daily timeout ─────────────────────────────────────────────────────
+        // ── Daily timeout
+        // ─────────────────────────────────────────────────────
         let berlin_now = candle.close_timestamp.with_timezone(&Berlin);
         let berlin_date = berlin_now.date_naive();
 
@@ -214,7 +219,8 @@ impl Agent for FlorianFvgAgent {
         if let SetupPhase::InTrade { .. } = self.setup_phase {
             if !obs.states.any_active_trade_for_agent(&self.identifier()) {
                 self.setup_phase = SetupPhase::Scanning;
-                // Fall through to update indicators and react to any simultaneous event
+                // Fall through to update indicators and react to any
+                // simultaneous event
             } else {
                 let m15_index = obs.market_view.ohlcv().len(&self.m15_id).saturating_sub(1);
                 self.m15_hhll.update(IndexedOhlcv {
@@ -229,10 +235,12 @@ impl Agent for FlorianFvgAgent {
             }
         }
 
-        // ── Update indicators ─────────────────────────────────────────────────
+        // ── Update indicators
+        // ─────────────────────────────────────────────────
         let m15_index = obs.market_view.ohlcv().len(&self.m15_id).saturating_sub(1);
 
-        // FVG first: any new FVG created on this bar is in active_gaps before HHLL fires
+        // FVG first: any new FVG created on this bar is in active_gaps before
+        // HHLL fires
         self.m15_fvg.update(IndexedOhlcv {
             index: m15_index,
             candle: *candle,
@@ -243,7 +251,8 @@ impl Agent for FlorianFvgAgent {
             candle: *candle,
         });
 
-        // ── Process structural events ─────────────────────────────────────────
+        // ── Process structural events
+        // ─────────────────────────────────────────
         let actions = if let Some((event, pivot)) = hhll_event {
             let is_bos_or_choch = matches!(
                 event,
@@ -254,14 +263,13 @@ impl Agent for FlorianFvgAgent {
             if is_bullish {
                 self.tp_extremum = Some(match self.tp_extremum {
                     Some(curr) if curr.0 >= pivot.price.0 => curr,
-                    _ => {
-                        pivot.price
-                    }
+                    _ => pivot.price,
                 });
             }
 
             if is_bos_or_choch {
-                // Find best FVG from the current movement BEFORE resetting the boundary
+                // Find best FVG from the current movement BEFORE resetting the
+                // boundary
                 let best_fvg = if is_bullish {
                     self.best_bullish_fvg_in_movement()
                 } else {
@@ -271,7 +279,6 @@ impl Agent for FlorianFvgAgent {
                 // Cancel any pending order (any BOS/CHoCH invalidates it)
                 let cancel_action = if let SetupPhase::OrderPending { trade_id } = self.setup_phase
                 {
-
                     self.setup_phase = SetupPhase::Scanning;
                     Some(Action::Cancel(CancelCmd {
                         agent_id: self.identifier(),
@@ -322,9 +329,11 @@ impl Agent for FlorianFvgAgent {
 }
 
 impl FlorianFvgAgent {
-    /// Picks the bullish FVG with the highest midpoint from the current movement.
+    /// Picks the bullish FVG with the highest midpoint from the current
+    /// movement.
     ///
-    /// "Current movement" = all bars since `movement_start_index` (the last BOS/CHoCH).
+    /// "Current movement" = all bars since `movement_start_index` (the last
+    /// BOS/CHoCH).
     fn best_bullish_fvg_in_movement(&self) -> Option<FairValueGap<OpenState>> {
         self.m15_fvg
             .active_gaps()
@@ -343,9 +352,10 @@ impl FlorianFvgAgent {
 
     /// Places the limit order at the FVG midpoint.
     ///
-    /// SL reference: the candle at `fvg.creation_index() − 3` in the market slice.
-    /// The FVG triple is [creation_index−2, creation_index−1, creation_index], so
-    /// creation_index−3 is the candle directly before the left FVG candle.
+    /// SL reference: the candle at `fvg.creation_index() − 3` in the market
+    /// slice. The FVG triple is [creation_index−2, creation_index−1,
+    /// creation_index], so creation_index−3 is the candle directly before
+    /// the left FVG candle.
     fn try_place_order(
         &mut self,
         fvg: FairValueGap<OpenState>,
@@ -369,7 +379,6 @@ impl FlorianFvgAgent {
         let trade_id = TradeId(self.trade_counter);
         self.setup_phase = SetupPhase::OrderPending { trade_id };
 
-
         Some(Action::Open(OpenCmd {
             agent_id: self.identifier(),
             trade_id,
@@ -387,7 +396,6 @@ impl FlorianFvgAgent {
 
         match self.setup_phase {
             SetupPhase::OrderPending { trade_id } => {
-
                 cmds.push((
                     self.m15_id.into(),
                     Action::Cancel(CancelCmd {
@@ -400,7 +408,6 @@ impl FlorianFvgAgent {
                 if let Some((_, active_trade)) =
                     obs.states.find_active_trade_for_agent(&self.agent_id)
                 {
-
                     cmds.push((
                         self.m15_id.into(),
                         Action::MarketClose(MarketCloseCmd {

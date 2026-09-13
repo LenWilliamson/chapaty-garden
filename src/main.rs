@@ -8,9 +8,7 @@ use strum::{AsRefStr, Display, EnumString};
 
 use crate::agents::{
     demo::{DemoAgent, DemoAgentGrid},
-    news::{
-        NewsBreakout, NewsBreakoutGrid, NewsFade, NewsFadeGrid, NewsHybrid, NewsHybridGrid,
-    },
+    news::{NewsBreakout, NewsBreakoutGrid, NewsFade, NewsFadeGrid, NewsHybrid, NewsHybridGrid},
     overnight::{UsOpenReversalAgent, UsOpenReversalAgentGrid},
     smc::{FlorianFvgAgent, FlorianFvgAgentGrid},
 };

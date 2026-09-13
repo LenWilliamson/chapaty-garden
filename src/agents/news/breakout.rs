@@ -1,10 +1,11 @@
+use std::sync::Arc;
+
 use anyhow::{Context, Result};
 use chapaty::prelude::*;
 use chrono::Duration;
 use itertools::iproduct;
 use serde::Serialize;
 use serde_with::{DurationSeconds, serde_as};
-use std::sync::Arc;
 
 use crate::agents::news::NewsPhase;
 
@@ -22,38 +23,50 @@ pub struct NewsBreakout {
     #[serde_as(as = "DurationSeconds<i64>")]
     latest_entry: Duration,
 
-    /// A factor that defines the portion of the news candle's body to risk before a stop-loss is triggered.
+    /// A factor that defines the portion of the news candle's body to risk
+    /// before a stop-loss is triggered.
     ///
-    /// The calculation starts from the news candle's **close price** and moves towards
-    /// (or beyond) its **open price**. A higher value means a wider stop-loss and more risk.
+    /// The calculation starts from the news candle's **close price** and moves
+    /// towards (or beyond) its **open price**. A higher value means a wider
+    /// stop-loss and more risk.
     ///
-    /// - **`-0.5`**: Places the stop-loss **beyond the close price**, creating an extra safety margin equal to **50%** of the candle's body size.
-    /// - **`0.0`**: Places the stop-loss at the **close price**. This risks **0%** of the candle body.
-    /// - **`0.5`**: Places the stop-loss at the **midpoint** of the body. This risks **50%** of the body.
-    /// - **`1.0`**: Places the stop-loss at the **open price**. This risks **100%** of the candle body.
-    /// - **`1.5`**: Places the stop-loss **beyond the open price**, creating an extra risk margin equal to **50%** of the candle's body size.
+    /// - **`-0.5`**: Places the stop-loss **beyond the close price**, creating
+    ///   an extra safety margin equal to **50%** of the candle's body size.
+    /// - **`0.0`**: Places the stop-loss at the **close price**. This risks
+    ///   **0%** of the candle body.
+    /// - **`0.5`**: Places the stop-loss at the **midpoint** of the body. This
+    ///   risks **50%** of the body.
+    /// - **`1.0`**: Places the stop-loss at the **open price**. This risks
+    ///   **100%** of the candle body.
+    /// - **`1.5`**: Places the stop-loss **beyond the open price**, creating an
+    ///   extra risk margin equal to **50%** of the candle's body size.
     ///
     /// # Formulas
     /// Let `body_size = |news_open - news_close|`.
-    /// - For **Long** trades: `StopLoss = news_close - body_size * stop_loss_risk_factor`
-    /// - For **Short** trades: `StopLoss = news_close + body_size * stop_loss_risk_factor`
+    /// - For **Long** trades: `StopLoss = news_close - body_size *
+    ///   stop_loss_risk_factor`
+    /// - For **Short** trades: `StopLoss = news_close + body_size *
+    ///   stop_loss_risk_factor`
     ///
     /// # Long Trade Example (Bullish News Candle: Open=100, Close=110, Body=10)
     /// - `stop_loss_risk_factor = 0.0` -> SL is `110 - 10 * 0.0 = 110`
     /// - `stop_loss_risk_factor = 1.0` -> SL is `110 - 10 * 1.0 = 100`
-    /// - `stop_loss_risk_factor = -0.2` -> SL is `110 - 10 * -0.2 = 112` (Extra safety margin)
+    /// - `stop_loss_risk_factor = -0.2` -> SL is `110 - 10 * -0.2 = 112` (Extra
+    ///   safety margin)
     ///
     /// # Short Trade Example (Bearish News Candle: Open=100, Close=90, Body=10)
     /// - `stop_loss_risk_factor = 0.0` -> SL is `90 + 10 * 0.0 = 90`
     /// - `stop_loss_risk_factor = 1.0` -> SL is `90 + 10 * 1.0 = 100`
-    /// - `stop_loss_risk_factor = -0.2` -> SL is `90 + 10 * -0.2 = 88` (Extra safety margin)
+    /// - `stop_loss_risk_factor = -0.2` -> SL is `90 + 10 * -0.2 = 88` (Extra
+    ///   safety margin)
     stop_loss_risk_factor: f64,
 
     /// Risk-Reward Ratio (RRR) for the strategy.
     ///
-    /// The Risk-Reward Ratio defines the relationship between the potential **loss** (risk) and
-    /// the potential **gain** (reward) of a trade. It is used to calculate the **take-profit**
-    /// level given a known entry price and stop-loss price.
+    /// The Risk-Reward Ratio defines the relationship between the potential
+    /// **loss** (risk) and the potential **gain** (reward) of a trade. It
+    /// is used to calculate the **take-profit** level given a known entry
+    /// price and stop-loss price.
     ///
     /// # Formula
     /// ```text
@@ -65,12 +78,14 @@ pub struct NewsBreakout {
     /// ```
     ///
     /// # Interpretation
-    /// - `risk_reward_ratio > 1.0` -> risking more than potential reward (caution)
+    /// - `risk_reward_ratio > 1.0` -> risking more than potential reward
+    ///   (caution)
     /// - `risk_reward_ratio = 1.0` -> risk equals reward
     /// - `risk_reward_ratio < 1.0` -> potential reward exceeds risk (favorable)
     ///
     /// # Valid Values
-    /// Must be strictly positive (`risk_reward_ratio > 0.0`), otherwise the trade setup is invalid.
+    /// Must be strictly positive (`risk_reward_ratio > 0.0`), otherwise the
+    /// trade setup is invalid.
     ///
     /// # Take-Profit Calculation
     /// Given a trade entry and stop-loss (from `stop_loss_risk_factor`):
@@ -116,7 +131,7 @@ impl NewsBreakout {
             .await
             .context("Failed to load trading environment")
     }
-    
+
     pub fn new() -> Self {
         Self::baseline(default_economic_cal_id(), default_ohlcv_id())
     }

@@ -3,11 +3,10 @@ pub mod fade;
 pub mod hybrid;
 
 pub use breakout::*;
-pub use fade::*;
-pub use hybrid::*;
-
 use chapaty::prelude::Ohlcv;
 use chrono::{DateTime, Utc};
+pub use fade::*;
+pub use hybrid::*;
 
 #[derive(Debug, Copy, Clone, Default)]
 enum NewsPhase {

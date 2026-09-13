@@ -1,16 +1,19 @@
+use std::{collections::BTreeSet, sync::Arc};
+
 use anyhow::{Context, Result};
 use chapaty::prelude::*;
 use chrono::{DateTime, Utc};
 use itertools::iproduct;
 use serde::Serialize;
-use std::{collections::BTreeSet, sync::Arc};
 
 use crate::self_hosted_source;
 
-/// Represents the exact phase the strategy is in during the current trading day.
+/// Represents the exact phase the strategy is in during the current trading
+/// day.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum DailyPhase {
-    /// Awaiting the overnight session to close and emit its high/low (before 09:30 Eastern Time).
+    /// Awaiting the overnight session to close and emit its high/low (before
+    /// 09:30 Eastern Time).
     #[default]
     AwaitingSession,
     /// Limit Orders (OCO) have been placed. We wait for one to be filled.
@@ -144,9 +147,11 @@ impl Agent for UsOpenReversalAgent {
                     return Ok(Actions::no_op());
                 };
 
-                // Guard against stale sessions from a prior episode. The overnight for today (T)
-                // closes at 09:30 NY = 13:30 UTC, which is still date T in UTC. Any session whose
-                // close falls on a different date belongs to a previous trading day.
+                // Guard against stale sessions from a prior episode. The
+                // overnight for today (T) closes at 09:30 NY =
+                // 13:30 UTC, which is still date T in UTC. Any session whose
+                // close falls on a different date belongs to a previous trading
+                // day.
                 if session.close_timestamp.date_naive() != ts_now.date_naive() {
                     return Ok(Actions::no_op());
                 }
