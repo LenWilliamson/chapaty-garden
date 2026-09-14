@@ -53,10 +53,12 @@ use crate::agents::news::{NewsBreakout, NewsBreakoutGrid, NewsFade, NewsFadeGrid
 /// or monthly resets), this is not an issue.
 ///
 /// See also: [`NewsFade`], [`NewsBreakout`].
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct NewsHybrid {
     pub breakout: NewsBreakout,
     pub fade: NewsFade,
+    #[serde(skip)]
+    agent_id: AgentIdentifier,
 }
 
 impl NewsHybrid {
@@ -76,11 +78,29 @@ impl NewsHybrid {
         Self {
             breakout: NewsBreakout::new(),
             fade: NewsFade::new(),
+            agent_id: AgentIdentifier::Named(Arc::new("NewsHybrid".to_string())),
         }
+    }
+
+    pub fn with_breakout_agent(self, breakout: NewsBreakout) -> Self {
+        Self { breakout, ..self }
+    }
+
+    pub fn with_fade_agent(self, fade: NewsFade) -> Self {
+        Self { fade, ..self }
     }
 }
 
 impl Agent for NewsHybrid {
+    fn identifier(&self) -> AgentIdentifier {
+        self.agent_id.clone()
+    }
+
+    fn reset(&mut self) {
+        self.breakout.reset();
+        self.fade.reset();
+    }
+
     fn act(&mut self, obs: Observation) -> ChapatyResult<Actions> {
         // 1. Get Proposals (Ask both sub-agents)
         // We clone 'obs' because the sub-agents need their own view
@@ -137,15 +157,6 @@ impl Agent for NewsHybrid {
         // === Default ===
         Ok(Actions::no_op())
     }
-
-    fn identifier(&self) -> AgentIdentifier {
-        AgentIdentifier::Named(Arc::new("NewsHybrid".to_string()))
-    }
-
-    fn reset(&mut self) {
-        self.breakout.reset();
-        self.fade.reset();
-    }
 }
 
 // ================================================================================================
@@ -153,8 +164,8 @@ impl Agent for NewsHybrid {
 // ================================================================================================
 
 pub struct NewsHybridGrid {
-    pub fade: NewsFadeGrid,
-    pub breakout: NewsBreakoutGrid,
+    fade: NewsFadeGrid,
+    breakout: NewsBreakoutGrid,
 }
 
 impl NewsHybridGrid {
@@ -175,10 +186,9 @@ impl NewsHybridGrid {
             .map(|(uid, (breakout, fade))| {
                 (
                     uid,
-                    NewsHybrid {
-                        breakout: breakout.1,
-                        fade: fade.1,
-                    },
+                    NewsHybrid::new()
+                        .with_breakout_agent(breakout.1)
+                        .with_fade_agent(fade.1),
                 )
             })
             .collect()
