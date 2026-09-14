@@ -1,4 +1,4 @@
-use std::{path::Path, str::FromStr, sync::LazyLock};
+use std::{path::Path, sync::LazyLock};
 
 use anyhow::Result;
 use chapaty::prelude::*;
@@ -32,12 +32,7 @@ static RESULTS_CLOUD_URI: LazyLock<Option<String>> =
     LazyLock::new(|| std::env::var("RESULTS_CLOUD_URI").ok());
 
 /// Which agent to run.
-static ACTIVE_AGENT: LazyLock<ActiveAgent> = LazyLock::new(|| {
-    std::env::var("ACTIVE_AGENT")
-        .ok()
-        .and_then(|s| ActiveAgent::from_str(s.trim()).ok())
-        .unwrap_or(ActiveAgent::FairValueGap)
-});
+const ACTIVE_AGENT: ActiveAgent = ActiveAgent::FairValueGap;
 
 #[derive(Debug, Clone, Copy, AsRefStr, EnumString, Display)]
 #[strum(serialize_all = "lowercase")]
@@ -62,7 +57,7 @@ async fn run() -> Result<()> {
     dotenvy::dotenv().ok();
     println!(">> Loading environment...");
 
-    match *ACTIVE_AGENT {
+    match ACTIVE_AGENT {
         ActiveAgent::Demo => {
             backtest(
                 &mut DemoAgent::env().await?,
