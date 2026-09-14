@@ -430,7 +430,7 @@ impl FvgAgent {
 pub struct FvgAgentGrid;
 
 impl FvgAgentGrid {
-    pub fn build() -> Vec<(usize, FvgAgent)> {
+    pub const fn build() -> Vec<(usize, FvgAgent)> {
         vec![]
     }
 }

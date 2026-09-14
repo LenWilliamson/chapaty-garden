@@ -32,7 +32,7 @@ static RESULTS_CLOUD_URI: LazyLock<Option<String>> =
     LazyLock::new(|| std::env::var("RESULTS_CLOUD_URI").ok());
 
 /// Which agent to run.
-const ACTIVE_AGENT: ActiveAgent = ActiveAgent::FairValueGap;
+const ACTIVE_AGENT: ActiveAgent = ActiveAgent::Demo;
 
 #[derive(Debug, Clone, Copy, AsRefStr, EnumString, Display)]
 #[strum(serialize_all = "lowercase")]
