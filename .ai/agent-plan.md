@@ -1,0 +1,185 @@
+# Agent Plan: The Spec-First Protocol
+
+> **CRITICAL PROTOCOL FOR ALL LLMs: Follow this exact workflow. Do not skip steps.**
+
+This repository uses a strict **Spec-First** workflow. Skipping to writing Rust code before a specification is finalized is the single most common way strategies ship with silent bugs. **Do not do it.**
+
+## User Fallback (If the user is lost)
+
+If the user pastes a trading strategy directly into the chat but has not created a `spec.md` file yet, **do not start writing code.** Politely offer to set up the directory structure for them, or instruct them to do it:
+
+1. Create the directory: `mkdir -p src/agents/<strategy_name>`
+2. Create the spec: `touch src/agents/<strategy_name>/spec.md`
+3. Paste their idea into the `spec.md` file.
+
+If the user is completely stuck and doesn't know what to build, guide them to `.ai/algorithm-ideas.md` to pick a seed strategy.
+
+**When registering a new agent in `main.rs`, only add — never remove.** The `ActiveAgent` enum lists every agent the user has built; previous variants and their match arms must remain intact so the user can switch back by changing a single line. Do not "clean up" inactive variants. If an unused-import warning fires for an agent that is not currently selected, leave it — the next switch will silence it.
+
+## Phase 1: Ingestion & Verification
+
+1. Read `src/agents/<name>/spec.md` exactly as the user wrote it.
+2. Read `.ai/chapaty-api.md` to understand the 80/20 core building blocks of the `chapaty` engine.
+3. Read `.ai/rust-vibe-rules.md` to understand the Rust style required in this repo.
+4. **Read the actual chapaty source for every indicator or API you plan to use** (see `AI.md § 1a`).
+   Identify which types the spec requires (e.g., `StreamingHhll`, `StreamingFairValueGap`, `MarketView`), then read each corresponding source file from the resolved-version registry path before writing any code.
+   Do not rely on `chapaty-api.md` alone. It is incomplete by design.
+5. Identify the asset, timeframe, and required data. Propose an `EnvPreset` (e.g., `BinanceBtcUsdt1d`).
+   - **Data-Agnostic Fallback:** Chapaty's logic is data-agnostic. If a user wants to trade an unsupported asset (e.g., a specific stock), tell them to request the data in Discord, but **proceed immediately** using a placeholder preset (like BTC-USDT). The trading logic remains identical; they will only need to swap the `MarketId` once their data is available.
+
+## Phase 2: Clarify & Parametrize
+
+Ask the user about every ambiguity. Start slowly with simple and reasonable defaults to avoid premature optimization. You must have explicit answers for:
+
+- **Entry condition(s)**: An exact, testable predicate over `Observation`.
+- **Exit condition(s)**: Stop-loss, take-profit, time-based, or a mix.
+- **Position sizing**: Fixed quantity or risk-based?
+- **Trade type**: Always long, always short, or directional by signal?
+
+**Crucial: Parameterization for Grid Search**
+The `chapaty` engine is built for evaluating agents in parallel.
+
+- Every "magic number" (e.g., SL/TP percentages, RSI thresholds, wait durations) must be a field on the Agent struct, allowing the generation of a parametrized grid for parallel backtesting.
+- The Agent struct must derive `Clone, Serialize, Debug`.
+- **Hard rule:** Numeric float axes use `GridAxis`; integer axes use standard iterator/range patterns; categorical sets use explicit `Vec`/array values.
+- **GridAxis is for float ranges; integer grids should use standard iterators.**
+
+## Phase 3: Rewrite Spec & Halt
+
+Rewrite `spec.md` as a formal specification with these sections (in exactly this order):
+
+1. **Summary**: One paragraph overview.
+2. **Environment**: The chosen `EnvPreset` and why.
+3. **Observation Inputs**: Which fields of `obs.market_view` (e.g., `ohlcv().rev_iter()`) and `obs.states` (e.g., `iter_live()`) you will read.
+4. **Entry Logic**: Plain English / pseudocode (no Rust yet).
+5. **Exit Logic**: Plain English / pseudocode (no Rust yet).
+6. **Parameters**: List every configurable field, its default value, and a sensible grid range for future parallel sweeps.
+7. **Assumptions / Out of Scope**: Anything you had to guess at or explicitly ignored.
+
+**STOP HERE.**
+End your response with:
+
+> _Please review `src/agents/<name>/spec.md`. Reply "approved" to continue, or describe the changes you want._
+
+**Do not write any Rust until the user explicitly approves.**
+
+## Phase 4: Implementation (The Modern Module Convention)
+
+Once approved, build the strategy using the modern Rust (non-`mod.rs`) directory convention.
+
+1. **Create the Implementation:** Write the agent logic in `src/agents/<name>/agent.rs`.
+2. **Create the Module Declaration:** Create `src/agents/<name>.rs` containing:
+   ```rust
+   pub mod agent;
+   pub use agent::*;
+   ```
+3. **Register the Module:** Append `pub mod <name>;` to `src/agents.rs` (create the file if missing).
+4. **Wire it into `src/main.rs`:**
+
+   `main.rs` uses a single-line agent switch: an `ActiveAgent` enum drives both the report folder and the match in `main`. Registering a new agent means four local edits.
+
+   **a. Import the agent and its grid** by adding a line to the existing `use` block:
+
+   ```rust
+   use crate::agents::{
+       demo::{DemoAgent, DemoAgentGrid},
+       template::{TemplateAgent, TemplateAgentGrid},
+       <name>::{<Name>Agent, <Name>AgentGrid},
+   };
+   ```
+
+   **b. Add a variant to the `ActiveAgent` enum:**
+
+   ```rust
+   #[derive(Debug, Clone, Copy, AsRefStr, EnumString, Display)]
+   #[strum(serialize_all = "lowercase")]
+   enum ActiveAgent {
+       Demo,
+       Template,
+       <Name>, // <- new variant
+   }
+   ```
+
+   The `strum(serialize_all = "lowercase")` derive turns `<Name>` into the report subdirectory (`chapaty/reports/<name>/`) automatically.
+
+   **c. Add a match arm in `main`:**
+
+   ```rust
+   ActiveAgent::<Name> => {
+       backtest(
+           &mut <Name>Agent::env().await?,
+           <Name>Agent::new(),
+           <Name>AgentGrid::baseline()?.build(),
+       )
+       .await
+   }
+   ```
+
+   Each agent owns its own `env()` (loads the `Environment` it needs) and `new()` constructor, so `backtest` just wires them together. Drop the `?` after `baseline()` if your grid builder isn't fallible (e.g. it has no `GridAxis::new(...)` calls that can fail).
+
+   **d. Activate it.** There are two ways to select `ACTIVE_AGENT`. Default to the constant form below unless the user has told you they deploy this template as a container job (e.g. Cloud Run) with the agent selected by an environment variable, in which case leave their existing `LazyLock`/env var setup alone and just add the new match arm.
+
+   **Default (local development):** a single constant. This is the right choice for the vast majority of users, who run the template locally and never touch environment variables. Switching agents becomes a one-line code edit:
+
+   ```rust
+   const ACTIVE_AGENT: ActiveAgent = ActiveAgent::<Name>;
+   ```
+
+   **Alternative (cloud/container deployment):** the agent is selected at runtime by an `ACTIVE_AGENT` environment variable set on the deployed container, falling back to a default if unset:
+
+   ```rust
+   static ACTIVE_AGENT: LazyLock<ActiveAgent> = LazyLock::new(|| {
+       std::env::var("ACTIVE_AGENT")
+           .ok()
+           .and_then(|s| ActiveAgent::from_str(s.trim()).ok())
+           .unwrap_or(ActiveAgent::Demo)
+   });
+   ```
+
+   Only use this form if the user needs to change agents by redeploying a container with a different env var instead of editing and rebuilding code. Do not introduce it unprompted.
+
+   `backtest` is generic over the concrete agent type, so each match arm monomorphizes independently. The log label comes from `Agent::identifier()`, so the agent owns its display name.
+
+   **Required guarantees (same as before):**
+   - **Single Agent Evaluation:** `backtest` always runs the baseline first and writes the journal, cumulative returns, portfolio performance, trade stats, and EOD equity curve. This guarantees the Python visualization script succeeds.
+   - **Grid Search Execution:** The grid builder returns `Vec<(usize, Agent)>` with UIDs assigned via `.enumerate()`, passed directly to `env.evaluate_agents()` for `rayon` parallelization.
+   - **Runtime Estimation:** Before launching massive grid searches (e.g., 1M+ agents), benchmark the baseline and estimate total wait time as `(single_agent_time * grid.len()) / cpu_cores`.
+
+## Phase 5: Handoff
+
+Summarize the completion for the user in plain English:
+
+- The parameters shipped and their defaults.
+- A 2-sentence recap of the entry/exit logic.
+- Tell them to run `make run` to backtest and generate the HTML tearsheet.
+
+_Note for LLM: If `make run` throws a Python error because `journal.csv` is missing, you failed the instruction in Phase 4. Ensure `main.rs` always evaluates a single agent to produce the journal._
+
+## Hard Engine Rules & Constraints
+
+1. **Never invent `chapaty` types.** If `.ai/chapaty-api.md` doesn't cover what you need, read the source directly from `~/.cargo/registry/src/chapaty-<VERSION>/src/` (resolve the version first via `cargo metadata`). Only ask the user if the source is unavailable.
+
+   **Source resolution order (must follow):**
+   1. If local IDE/CLI access exists: inspect local Cargo registry first (`~/.cargo/registry/.../chapaty-*`) and current workspace files.
+   2. If local access is unavailable: fetch references from:
+      - https://github.com/LenWilliamson/chapaty
+      - https://docs.rs/chapaty/latest/chapaty/
+   3. crates.io is optional metadata only:
+      - https://crates.io/crates/chapaty
+   4. `curl`/web-fetch is fallback only when local registry/workspace access is not available.
+
+2. **Observation Space Rules:**
+   - To scan price history, use `obs.market_view.ohlcv().rev_iter(id)` (searches newest to oldest).
+   - To check agent positions, iterate the hot path via `obs.states.iter_live()` or `obs.states.any_active_trade_for_agent()`.
+3. **Never add `<'a>` lifetimes** to user-facing strategy code. Use `.clone()` or `Copy` types.
+4. **Error Handling:** All strategy functions must return `ChapatyResult<T>`.
+5. **Event Loop & Missing Price Data:** In financial simulations with multiple streams, data starts at different times. Additionally, news events can arrive on weekends when markets are closed. Therefore, `obs.market_view.try_resolved_close_price(symbol)` may return an error if data hasn't streamed in yet.
+   **Do NOT use `?` or `.unwrap()` on price lookups inside the `act` loop.** Doing so will crash the simulation. Handle it gracefully:
+   ```rust
+   let current_price = match obs.market_view.try_resolved_close_price(self.symbol) {
+       Ok(price) => price.0,
+       Err(_) => return Ok(Actions::no_op()), // Wait for the next tick
+   };
+   ```
+   Do not blindly fire market orders without checking if price data exists; otherwise, it will be rejected as an invalid action.
+6. **Python Visualization is Off-Limits:** Do not modify `visualization/generate_tearsheet.py`. It defensively handles `groupby("date")` logic for EOD downsampling. Leave it exactly as is.

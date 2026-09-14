@@ -1,0 +1,144 @@
+# ==============================================================================
+# Chapaty Template: Quick Actions
+# ==============================================================================
+# Usage: make <target>
+#
+# Targets:
+#   setup	: One-time install (compiles Rust release build + Python deps)
+#   run		: Runs the backtest and generates the QuantStats HTML tearsheet
+#   update	: Refreshes LLM prompts + viz script, bumps chapaty crate
+#   check	: Runs fmt, clippy, and tests (./bin/pre-push.sh hook)
+#   doctor	: Validates required dependencies (Rust + Python)
+#   clean	: Removes build artifacts, reports, and the Python venv
+#   eject	: Deletes .github, deploy, bin, .dockerignore (optional, never automatic)
+# ==============================================================================
+
+.PHONY: setup run update check doctor clean eject
+
+# Public repo used by `make update` to pull the latest prompts.
+TEMPLATE_REPO ?= https://raw.githubusercontent.com/LenWilliamson/chapaty-template/refs/heads/main
+PYTHON_VENV   := .venv
+VENV_PIP      := $(PYTHON_VENV)/bin/pip
+VENV_PYTHON   := $(PYTHON_VENV)/bin/python
+# Keep build flags identical between `setup` and `run`
+CARGO_RUSTFLAGS := -C target-cpu=native
+
+setup: doctor
+	@echo ">> Building chapaty in release mode (first run downloads and compiles ~6 min of deps)..."
+	RUSTFLAGS="$(CARGO_RUSTFLAGS)" cargo build --release
+	@echo ">> Creating Python virtual environment in $(PYTHON_VENV)..."
+	python3 -m venv $(PYTHON_VENV)
+	@echo ">> Upgrading pip..."
+	$(VENV_PYTHON) -m pip install --upgrade pip --quiet
+	@echo ">> Installing Python visualization dependencies..."
+	$(VENV_PIP) install -r visualization/requirements.txt --quiet
+	@echo ">> Setup complete. Run 'make run' to backtest."
+	@echo ">> This repository also carries files only needed to maintain the template"
+	@echo ">> itself (.github, deploy, bin, .dockerignore). Run 'make eject'"
+	@echo ">> if you want them gone."
+
+run:
+	@if [ ! -d "$(PYTHON_VENV)" ]; then \
+		echo "ERROR: Python virtual environment not found. Please run 'make setup' first."; \
+		exit 1; \
+	fi
+	@AGENT="$$ACTIVE_AGENT"; \
+	if [ -z "$$AGENT" ]; then \
+		AGENT=$$(grep -E '^const ACTIVE_AGENT' src/main.rs \
+		          | grep -oE 'ActiveAgent::[A-Za-z0-9_]+' \
+		          | sed -E 's/ActiveAgent:://'); \
+	fi; \
+	AGENT=$$(printf '%s' "$${AGENT:-Demo}" | tr '[:upper:]' '[:lower:]'); \
+	echo ">> Active agent: $$AGENT"; \
+	echo ">> Running Chapaty backtest natively (target-cpu=native) with increased stack size of 64MiB..."; \
+	echo ">> (See .ai/rust-vibe-rules.md for RUST_MIN_STACK sizing guidance.)"; \
+	RUSTFLAGS="$(CARGO_RUSTFLAGS)" RUST_MIN_STACK=67108864 RUST_BACKTRACE=1 cargo run --release && \
+	echo ">> Generating QuantStats tearsheet for agent: $$AGENT" && \
+	$(VENV_PYTHON) visualization/generate_tearsheet.py $$AGENT
+	@echo ">> Run completed."
+
+update:
+	@echo ">> [1/4] Syncing LLM prompts from $(TEMPLATE_REPO)..."
+	@mkdir -p .ai
+	curl -fsSL $(TEMPLATE_REPO)/AI.md                      -o AI.md
+	curl -fsSL $(TEMPLATE_REPO)/.ai/agent-plan.md          -o .ai/agent-plan.md
+	curl -fsSL $(TEMPLATE_REPO)/.ai/chapaty-api.md         -o .ai/chapaty-api.md
+	curl -fsSL $(TEMPLATE_REPO)/.ai/rust-vibe-rules.md     -o .ai/rust-vibe-rules.md
+	@echo ">> [2/4] Syncing visualization script..."
+	curl -fsSL $(TEMPLATE_REPO)/visualization/generate_tearsheet.py -o visualization/generate_tearsheet.py
+	curl -fsSL $(TEMPLATE_REPO)/visualization/requirements.txt      -o visualization/requirements.txt
+	@echo ">> [3/4] Updating Rust dependencies..."
+	cargo update
+	@echo ">> [4/4] Updating Makefile..."
+	curl -fsSL $(TEMPLATE_REPO)/Makefile -o Makefile
+	@echo ">> Update complete. If the Makefile itself changed, re-run 'make update' to apply new logic."
+
+check:
+	@echo ">> Running pre-push checks..."
+	./bin/pre-push.sh
+
+doctor:
+	@echo ">> Checking required dependencies..."
+	@echo ""
+	@MISSING=0; \
+	REQUIRED_RUST=$$(grep -m1 '^rust-version' Cargo.toml | cut -d'"' -f2); \
+	if command -v rustc > /dev/null 2>&1; then \
+		HAVE_RUST=$$(rustc --version | awk '{print $$2}' | cut -d- -f1); \
+		if [ -z "$$REQUIRED_RUST" ]; then \
+			echo "  Rust:   $$(rustc --version)"; \
+		elif awk -v have="$$HAVE_RUST" -v want="$$REQUIRED_RUST" 'BEGIN { \
+			n = split(have, h, "."); m = split(want, w, "."); \
+			for (i = 1; i <= 3; i++) { \
+				hv = (i <= n ? h[i] + 0 : 0); wv = (i <= m ? w[i] + 0 : 0); \
+				if (hv > wv) exit 0; if (hv < wv) exit 1; \
+			} exit 0 }'; then \
+			echo "  Rust:   $$(rustc --version) (OK, requires $$REQUIRED_RUST+)"; \
+		else \
+			echo "  Rust:   $$(rustc --version) (TOO OLD)"; \
+			echo "            Requires Rust $$REQUIRED_RUST+ (rust-version in Cargo.toml). Update via: rustup update"; \
+			MISSING=1; \
+		fi; \
+	else \
+		echo "  Rust:   NOT FOUND"; \
+		echo "            Install via: https://www.rust-lang.org/tools/install"; \
+		MISSING=1; \
+	fi; \
+	if command -v python3 > /dev/null 2>&1; then \
+		if python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 13) else 1)' 2>/dev/null; then \
+			echo "  Python: $$(python3 --version) (OK)"; \
+		else \
+			echo "  Python: $$(python3 --version) (TOO OLD)"; \
+			echo "            Requires Python 3.13+. Install via: https://github.com/pyenv/pyenv#installation"; \
+			MISSING=1; \
+		fi; \
+	else \
+		echo "  Python: NOT FOUND"; \
+		echo "            Install via: https://github.com/pyenv/pyenv#installation"; \
+		MISSING=1; \
+	fi; \
+	echo ""; \
+	if [ $$MISSING -eq 1 ]; then \
+		echo "ERROR: One or more required dependencies are missing or outdated. See above."; \
+		exit 1; \
+	fi
+	@echo ">> All required dependencies found."
+
+clean:
+	@echo ">> Cleaning Rust artifacts and reports..."
+	cargo clean
+	rm -rf reports chapaty/reports
+	@echo ">> Removing Python virtual environment..."
+	rm -rf $(PYTHON_VENV)
+
+# This is a separate target on purpose, and never runs as part of 'setup'. A
+# maintainer of the template itself may re-run 'make setup' for reasons that
+# have nothing to do with this cleanup, for example after 'make clean', and a
+# destructive step hiding inside a routine target is how you lose work by
+# accident. Deleting these files is something only a template user decides to
+# do, once, on purpose, by typing this exact command.
+eject:
+	@echo ">> Removing template maintainer files: .github, deploy, bin, .dockerignore"
+	@echo ">>   These only build and publish the container images for the hosted"
+	@echo ">>   pipeline. You do not need any of them to write or run a strategy."
+	rm -rf .github deploy bin .dockerignore
+	@echo ">> Done. Your working copy no longer has them."
