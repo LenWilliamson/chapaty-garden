@@ -55,7 +55,7 @@ impl UsOpenReversalAgent {
             broker: DataBroker::NinjaTrader,
             exchange: Some(Exchange::Cme),
             symbol: Symbol::Future(FutureContract {
-                root,
+                root: FutureRoot::EminiSp500,
                 month: ContractMonth::September,
                 year: ContractYear::Y6,
             }),
