@@ -21,3 +21,9 @@ enum NewsPhase {
         news_candle: Option<Ohlcv>,
     },
 }
+
+impl NewsPhase {
+    fn is_awaiting_news(&self) -> bool {
+        matches!(self, NewsPhase::AwaitingNews)
+    }
+}

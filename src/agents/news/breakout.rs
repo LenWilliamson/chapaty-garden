@@ -10,7 +10,7 @@ use serde_with::{DurationSeconds, serde_as};
 use crate::agents::news::NewsPhase;
 
 #[serde_as]
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct NewsBreakout {
     #[serde(skip)]
     economic_cal_id: EconomicCalendarId,
@@ -117,6 +117,9 @@ pub struct NewsBreakout {
 
     #[serde(skip)]
     trade_counter: i64,
+
+    #[serde(skip)]
+    agent_id: AgentIdentifier,
 }
 
 impl NewsBreakout {
@@ -133,19 +136,16 @@ impl NewsBreakout {
     }
 
     pub fn new() -> Self {
-        Self::baseline(default_economic_cal_id(), default_ohlcv_id())
-    }
-
-    pub fn baseline(economic_cal_id: EconomicCalendarId, ohlcv_id: OhlcvId) -> Self {
         Self {
-            economic_cal_id,
-            ohlcv_id,
+            economic_cal_id: economic_cal_id(),
+            ohlcv_id: ohlcv_id(),
             earliest_entry: Duration::seconds(480),
             latest_entry: Duration::seconds(3000),
             stop_loss_risk_factor: 0.89,
             risk_reward_ratio: 0.726,
             phase: NewsPhase::default(),
             trade_counter: 0,
+            agent_id: AgentIdentifier::Named(Arc::new("NewsBreakout".to_string())),
         }
     }
 
@@ -153,21 +153,21 @@ impl NewsBreakout {
         self.ohlcv_id
     }
 
-    pub const fn with_earliest_entry_candle(self, duration: Duration) -> Self {
+    pub fn with_earliest_entry_candle(self, duration: Duration) -> Self {
         Self {
             earliest_entry: duration,
             ..self
         }
     }
 
-    pub const fn with_latest_entry_candle(self, duration: Duration) -> Self {
+    pub fn with_latest_entry_candle(self, duration: Duration) -> Self {
         Self {
             latest_entry: duration,
             ..self
         }
     }
 
-    pub const fn with_stop_loss_risk_factor(self, factor: f64) -> Self {
+    pub fn with_stop_loss_risk_factor(self, factor: f64) -> Self {
         Self {
             stop_loss_risk_factor: factor,
             ..self
@@ -222,7 +222,17 @@ impl NewsBreakout {
         }
     }
 }
+
 impl Agent for NewsBreakout {
+    fn identifier(&self) -> AgentIdentifier {
+        self.agent_id.clone()
+    }
+
+    fn reset(&mut self) {
+        self.phase = NewsPhase::AwaitingNews;
+        self.trade_counter = 0;
+    }
+
     fn act(&mut self, obs: Observation) -> ChapatyResult<Actions> {
         let economic_cal_id = self.economic_cal_id;
         let ohlcv_id = self.ohlcv_id;
@@ -235,7 +245,7 @@ impl Agent for NewsBreakout {
         }
 
         // === 1. Update phase ===
-        if matches!(self.phase, NewsPhase::AwaitingNews)
+        if self.phase.is_awaiting_news()
             && let Some(news_event) = obs.market_view.economic_news().last_event(&economic_cal_id)
         {
             let news_candle_candidate = obs
@@ -314,15 +324,6 @@ impl Agent for NewsBreakout {
         let market_id: MarketId = ohlcv_id.into();
         Ok(Actions::from((market_id, Action::Open(cmd))))
     }
-
-    fn identifier(&self) -> AgentIdentifier {
-        AgentIdentifier::Named(Arc::new("NewsBreakout".to_string()))
-    }
-
-    fn reset(&mut self) {
-        self.phase = NewsPhase::AwaitingNews;
-        self.trade_counter = 0;
-    }
 }
 
 // ================================================================================================
@@ -370,8 +371,6 @@ impl StopLossTarget {
 // ================================================================================================
 
 pub struct NewsBreakoutGrid {
-    cal_id: EconomicCalendarId,
-    market_id: OhlcvId,
     earliest_entry: (Duration, Duration),
     latest_entry: (Duration, Duration),
     stop_loss_risk_factor: GridAxis,
@@ -382,12 +381,10 @@ impl NewsBreakoutGrid {
     /// Creates a grid generator with a default "Baseline" search space.
     pub fn baseline() -> ChapatyResult<Self> {
         Ok(Self {
-            cal_id: default_economic_cal_id(),
-            market_id: default_ohlcv_id(),
             earliest_entry: (Duration::minutes(1), Duration::minutes(6)),
             latest_entry: (Duration::minutes(20), Duration::minutes(28)),
-            stop_loss_risk_factor: GridAxis::new("0.5", "1.5", "0.01")?,
-            risk_reward_ratio: GridAxis::new("0.1", "2.6", "0.01")?,
+            stop_loss_risk_factor: GridAxis::new("0.5", "1.5", "0.1")?,
+            risk_reward_ratio: GridAxis::new("0.1", "2.6", "0.1")?,
         })
     }
 
@@ -412,9 +409,6 @@ impl NewsBreakoutGrid {
             .collect::<Vec<_>>();
 
         // === Eagerly Collect Valid Args ===
-        let cal_id = self.cal_id;
-        let market_id = self.market_id;
-
         iproduct!(
             risk_reward_ratios,
             stop_loss_risk_factors,
@@ -426,7 +420,7 @@ impl NewsBreakoutGrid {
         .map(|(uid, (rrr, slrf, latest, earliest))| {
             (
                 uid,
-                NewsBreakout::baseline(cal_id, market_id)
+                NewsBreakout::new()
                     .with_earliest_entry_candle(earliest)
                     .with_latest_entry_candle(latest)
                     .with_stop_loss_risk_factor(slrf)
@@ -442,7 +436,7 @@ impl NewsBreakoutGrid {
 // Market Data
 // ================================================================================================
 
-const fn default_ohlcv_id() -> OhlcvId {
+const fn ohlcv_id() -> OhlcvId {
     OhlcvId {
         broker: DataBroker::NinjaTrader,
         exchange: Exchange::Cme,
@@ -455,7 +449,7 @@ const fn default_ohlcv_id() -> OhlcvId {
     }
 }
 
-const fn default_economic_cal_id() -> EconomicCalendarId {
+const fn economic_cal_id() -> EconomicCalendarId {
     EconomicCalendarId {
         broker: DataBroker::InvestingCom,
         data_source: None,
