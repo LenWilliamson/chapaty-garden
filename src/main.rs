@@ -36,7 +36,7 @@ static ACTIVE_AGENT: LazyLock<ActiveAgent> = LazyLock::new(|| {
     std::env::var("ACTIVE_AGENT")
         .ok()
         .and_then(|s| ActiveAgent::from_str(s.trim()).ok())
-        .unwrap_or(ActiveAgent::Demo)
+        .unwrap_or(ActiveAgent::FairValueGap)
 });
 
 #[derive(Debug, Clone, Copy, AsRefStr, EnumString, Display)]
@@ -113,20 +113,6 @@ async fn run() -> Result<()> {
             .await
         }
     }
-}
-
-/// Builds a [`DataSource::SelfHosted`] pointing at a self-hosted gRPC endpoint,
-/// configured via `CHAPATY_GRPC_ENDPOINT` and `CHAPATY_CREDENTIAL` env vars.
-fn self_hosted_source() -> DataSource {
-    let endpoint = std::env::var("CHAPATY_GRPC_ENDPOINT")
-        .unwrap_or_else(|_| "http://localhost:50051".to_string());
-    let credential = std::env::var("CHAPATY_CREDENTIAL").ok();
-
-    DataSource::SelfHosted(DefaultGrpcEndpoint {
-        endpoint: EndpointUrl::from(endpoint),
-        credential: credential.map(Credential::from),
-        metadata_key: None,
-    })
 }
 
 /// Runs a baseline backtest followed by a parallel grid search.

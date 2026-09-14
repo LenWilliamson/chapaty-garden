@@ -6,8 +6,6 @@ use chrono::{DateTime, NaiveDate, Timelike, Utc};
 use chrono_tz::Europe::Berlin;
 use serde::Serialize;
 
-use crate::self_hosted_source;
-
 // ================================================================================================
 // State Machine
 // ================================================================================================
@@ -44,8 +42,8 @@ impl SetupPhase {
 // Agent
 // ================================================================================================
 
-/// Fair Value Gap / Smart-Money Concepts strategy on the 6E Euro FX future (M15,
-/// Long only).
+/// Fair Value Gap / Smart-Money Concepts strategy on the 6E Euro FX future
+/// (M15, Long only).
 #[derive(Debug, Clone, Serialize)]
 pub struct FvgAgent {
     #[serde(skip)]
@@ -53,26 +51,28 @@ pub struct FvgAgent {
 
     trade_qty: f64,
 
-    // Indicators
+    // === Indicators ===
     #[serde(skip)]
     m15_hhll: StreamingHhll,
+    /// Fill detection uses `with_price_source(OpenClose)`.
     #[serde(skip)]
-    m15_fvg: StreamingFairValueGap, /* with_price_source(OpenClose) → fill detection uses
-                                     * Open/Close */
+    m15_fvg: StreamingFairValueGap,
 
-    // Index of the last BOS/CHoCH bar. FVGs with creation_index > this value belong to the
-    // current movement and are candidates for entry.
+    /// Index of the last BOS/CHoCH bar. FVGs with `creation_index` greater
+    /// than this value belong to the current movement and are candidates for
+    /// entry.
     #[serde(skip)]
     movement_start_index: usize,
 
-    // Running maximum of all confirmed bullish BOS/CHoCH pivot prices. Never decreases.
+    /// Running maximum of all confirmed bullish BOS/CHoCH pivot prices. Never
+    /// decreases.
     #[serde(skip)]
     tp_extremum: Option<Price>,
 
     #[serde(skip)]
     setup_phase: SetupPhase,
 
-    // Daily timeout tracking (Berlin/CET timezone)
+    // === Daily timeout tracking (Berlin/CET timezone) ===
     #[serde(skip)]
     last_m15_ts: Option<DateTime<Utc>>,
     #[serde(skip)]
@@ -86,7 +86,6 @@ pub struct FvgAgent {
 
 impl FvgAgent {
     pub async fn env() -> Result<Environment> {
-        let source = self_hosted_source();
         let m15_query = OhlcvFutureQuery {
             broker: DataBroker::NinjaTrader,
             exchange: Some(Exchange::Cme),
@@ -105,7 +104,7 @@ impl FvgAgent {
             ..FilterConfig::default()
         };
         let cfg = EnvConfig::default()
-            .add_ohlcv_future(source, m15_query)
+            .add_ohlcv_future(DataSource::Hosted, m15_query)
             .with_episode_length(EpisodeLength::Infinite)
             .with_filter_config(filter)
             .with_trade_hint(1);
@@ -181,8 +180,7 @@ impl Agent for FvgAgent {
         }
         self.last_m15_ts = Some(candle.close_timestamp);
 
-        // ── Daily timeout
-        // ─────────────────────────────────────────────────────
+        // === Daily timeout ===
         let berlin_now = candle.close_timestamp.with_timezone(&Berlin);
         let berlin_date = berlin_now.date_naive();
 
@@ -202,7 +200,7 @@ impl Agent for FvgAgent {
             return Ok(Actions::no_op());
         }
 
-        // ── Check if pending order was filled ────────────────────────────────
+        // === Check if pending order was filled ===
         if let SetupPhase::OrderPending { trade_id } = self.setup_phase {
             let is_filled = obs
                 .states
@@ -214,7 +212,7 @@ impl Agent for FvgAgent {
             }
         }
 
-        // ── If InTrade: maintain HHLL/FVG state but wait for TP/SL ──────────
+        // === If InTrade: maintain HHLL/FVG state but wait for TP/SL ===
         if self.setup_phase.is_in_trade() {
             if obs.states.any_active_trade_for_agent(&self.identifier()) {
                 let m15_index = obs.market_view.ohlcv().len(&self.m15_id).saturating_sub(1);
@@ -233,8 +231,7 @@ impl Agent for FvgAgent {
             // simultaneous event
         }
 
-        // ── Update indicators
-        // ─────────────────────────────────────────────────
+        // === Update indicators ===
         let m15_index = obs.market_view.ohlcv().len(&self.m15_id).saturating_sub(1);
 
         // FVG first: any new FVG created on this bar is in active_gaps before
@@ -249,8 +246,7 @@ impl Agent for FvgAgent {
             candle: *candle,
         });
 
-        // ── Process structural events
-        // ─────────────────────────────────────────
+        // === Process structural events ===
         let actions = if let Some((event, pivot)) = hhll_event {
             let is_bos_or_choch = matches!(
                 event,
@@ -348,9 +344,9 @@ impl FvgAgent {
 
     /// Places the limit order at the FVG midpoint.
     ///
-    /// SL reference: the candle at `fvg.creation_index() − 3` in the market
-    /// slice. The FVG triple is [`creation_index−2`, `creation_index−1`,
-    /// `creation_index`], so `creation_index−3` is the candle directly before
+    /// SL reference: the candle at `fvg.creation_index() - 3` in the market
+    /// slice. The FVG triple is [`creation_index-2`, `creation_index-1`,
+    /// `creation_index`], so `creation_index-3` is the candle directly before
     /// the left FVG candle.
     fn try_place_order(
         &mut self,
@@ -435,7 +431,7 @@ pub struct FvgAgentGrid;
 
 impl FvgAgentGrid {
     pub fn build() -> Vec<(usize, FvgAgent)> {
-        vec![(0, FvgAgent::new())]
+        vec![]
     }
 }
 

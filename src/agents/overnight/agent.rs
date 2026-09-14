@@ -6,8 +6,6 @@ use chrono::{DateTime, Utc};
 use itertools::iproduct;
 use serde::Serialize;
 
-use crate::self_hosted_source;
-
 /// Represents the exact phase the strategy is in during the current trading
 /// day.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -49,7 +47,6 @@ pub struct UsOpenReversalAgent {
 
 impl UsOpenReversalAgent {
     pub async fn env(root: FutureRoot) -> Result<Environment> {
-        let source = self_hosted_source();
         let session_cfg = SessionCfg {
             window: SessionWindow::us_overnight(),
             price_aggregation: AggregatedPrice::Hlc3,
@@ -72,7 +69,7 @@ impl UsOpenReversalAgent {
             ..FilterConfig::default()
         };
         let cfg = EnvConfig::default()
-            .add_ohlcv_future(source.clone(), m1_query)
+            .add_ohlcv_future(DataSource::Hosted, m1_query)
             .with_episode_length(EpisodeLength::Day)
             .with_filter_config(filter)
             .with_trade_hint(2);
