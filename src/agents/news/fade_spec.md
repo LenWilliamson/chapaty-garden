@@ -6,8 +6,8 @@
 
 ## 2. Environment
 
-**Preset:** `EnvPreset::NinjaTraderCme6eh61mUsEmpHighEventsOnly`
-**Why:** Like the breakout, the fade reads exactly two streams — a high-impact economic calendar and a fast intraday OHLCV feed. This preset supplies 1-minute EUR/USD CME futures (`6E`, June '26) and the US Employment, high-importance events only.
+**Preset:** `EnvPreset::NinjaTraderCme6eu61mUsEmpHighEventsOnly`
+**Why:** Like the breakout, the fade reads exactly two streams — a high-impact economic calendar and a fast intraday OHLCV feed. This preset supplies 1-minute EUR/USD CME futures (`6E`, current front-month quarterly contract) and the US Employment, high-importance events only.
 
 ## 3. Observation Inputs
 

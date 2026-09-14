@@ -6,8 +6,8 @@
 
 ## 2. Environment
 
-**Preset:** `EnvPreset::NinjaTraderCme6eh61mUsEmpHighEventsOnly`
-**Why:** The strategy needs (a) a high-impact economic calendar to anchor the event and (b) a fast intraday OHLCV stream to detect the breakout. This preset delivers 1-minute EUR/USD CME futures (`6E`, June '26) alongside the US Employment, high-importance economic events only — exactly the two streams the agent reads.
+**Preset:** `EnvPreset::NinjaTraderCme6eu61mUsEmpHighEventsOnly`
+**Why:** The strategy needs (a) a high-impact economic calendar to anchor the event and (b) a fast intraday OHLCV stream to detect the breakout. This preset delivers 1-minute EUR/USD CME futures (`6E`, current front-month quarterly contract) alongside the US Employment, high-importance economic events only — exactly the two streams the agent reads.
 
 ## 3. Observation Inputs
 

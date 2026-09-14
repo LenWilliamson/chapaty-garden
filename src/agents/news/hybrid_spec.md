@@ -6,8 +6,8 @@
 
 ## 2. Environment
 
-**Preset:** `EnvPreset::NinjaTraderCme6eh61m5mUsEmpHighEventsOnly`
-**Why:** The hybrid needs both timeframes its sub-agents subscribe to. This preset carries EUR/USD CME futures (`6E`, June '26) at **1-minute and 5-minute** periods alongside the US Employment, high-importance events only — the `1m5m` in the name being exactly what distinguishes it from the single-timeframe breakout/fade preset.
+**Preset:** `EnvPreset::NinjaTraderCme6eu61m5mUsEmpHighEventsOnly`
+**Why:** The hybrid needs both timeframes its sub-agents subscribe to. This preset carries EUR/USD CME futures (`6E`, current front-month quarterly contract) at **1-minute and 5-minute** periods alongside the US Employment, high-importance events only — the `1m5m` in the name being exactly what distinguishes it from the single-timeframe breakout/fade preset.
 
 ## 3. Observation Inputs
 
