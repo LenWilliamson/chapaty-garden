@@ -46,7 +46,7 @@ pub struct UsOpenReversalAgent {
 }
 
 impl UsOpenReversalAgent {
-    pub async fn env(root: FutureRoot) -> Result<Environment> {
+    pub async fn env() -> Result<Environment> {
         let session_cfg = SessionCfg {
             window: SessionWindow::us_overnight(),
             price_aggregation: AggregatedPrice::Hlc3,
@@ -55,7 +55,7 @@ impl UsOpenReversalAgent {
             broker: DataBroker::NinjaTrader,
             exchange: Some(Exchange::Cme),
             symbol: Symbol::Future(FutureContract {
-                root,
+                root: FutureRoot::EminiSp500,
                 month: ContractMonth::September,
                 year: ContractYear::Y6,
             }),
@@ -79,17 +79,16 @@ impl UsOpenReversalAgent {
             .context("Failed to load trading environment")
     }
 
-    pub fn new(root: FutureRoot) -> Self {
-        let ohlcv_id = m1_id(root);
+    pub fn new() -> Self {
         let session_id = OhlcvSessionId {
-            parent: ohlcv_id,
+            parent: ohlcv_id(),
             cfg: SessionCfg {
                 window: SessionWindow::us_overnight(),
                 price_aggregation: AggregatedPrice::Hlc3,
             },
         };
         Self {
-            ohlcv_id,
+            ohlcv_id: ohlcv_id(),
             session_id,
             sl_ticks: 10,
             tp_ticks: 20,
@@ -258,16 +257,14 @@ impl Agent for UsOpenReversalAgent {
 // ================================================================================================
 
 pub struct UsOpenReversalAgentGrid {
-    root: FutureRoot,
     sl_ticks: Vec<u16>,
     tp_ticks: Vec<u16>,
     max_hold_mins: Vec<u16>,
 }
 
 impl UsOpenReversalAgentGrid {
-    pub fn baseline(root: FutureRoot) -> Self {
+    pub fn baseline() -> Self {
         Self {
-            root,
             sl_ticks: (10..=50).step_by(5).collect(),
             tp_ticks: (20..=100).step_by(5).collect(),
             max_hold_mins: (30..=90).step_by(10).collect(),
@@ -275,14 +272,13 @@ impl UsOpenReversalAgentGrid {
     }
 
     pub fn build(self) -> Vec<(usize, UsOpenReversalAgent)> {
-        let root = self.root;
         iproduct!(self.sl_ticks, self.tp_ticks, self.max_hold_mins)
             .enumerate()
             .filter(|(_, (sl, tp, _))| 2 * *sl <= *tp)
             .map(|(uid, (sl, tp, hold))| {
                 (
                     uid,
-                    UsOpenReversalAgent::new(root)
+                    UsOpenReversalAgent::new()
                         .with_sl_ticks(sl)
                         .with_tp_ticks(tp)
                         .with_max_hold_mins(i64::from(hold)),
@@ -296,12 +292,12 @@ impl UsOpenReversalAgentGrid {
 // Market Data
 // ================================================================================================
 
-const fn m1_id(root: FutureRoot) -> OhlcvId {
+const fn ohlcv_id() -> OhlcvId {
     OhlcvId {
         broker: DataBroker::NinjaTrader,
         exchange: Exchange::Cme,
         symbol: Symbol::Future(FutureContract {
-            root,
+            root: FutureRoot::EminiSp500,
             month: ContractMonth::September,
             year: ContractYear::Y6,
         }),

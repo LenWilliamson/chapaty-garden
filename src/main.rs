@@ -99,11 +99,10 @@ async fn run() -> Result<()> {
             .await
         }
         ActiveAgent::Overnight => {
-            let root = FutureRoot::EminiSp500;
             backtest(
-                &mut UsOpenReversalAgent::env(root).await?,
-                UsOpenReversalAgent::new(root),
-                UsOpenReversalAgentGrid::baseline(root).build(),
+                &mut UsOpenReversalAgent::env().await?,
+                UsOpenReversalAgent::new(),
+                UsOpenReversalAgentGrid::baseline().build(),
             )
             .await
         }
