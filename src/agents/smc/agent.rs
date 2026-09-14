@@ -12,7 +12,7 @@ use crate::self_hosted_source;
 // State Machine
 // ================================================================================================
 
-/// Lifecycle phase of Florian's FVG strategy.
+/// Lifecycle phase of FVG strategy.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 enum SetupPhase {
     /// Watching for the next bullish BOS/CHoCH + FVG in the current movement.
@@ -27,6 +27,14 @@ enum SetupPhase {
 }
 
 impl SetupPhase {
+    const fn is_scanning(&self) -> bool {
+        matches!(self, Self::Scanning)
+    }
+
+    const fn is_in_trade(&self) -> bool {
+        matches!(self, Self::InTrade { .. })
+    }
+
     const fn is_done_for_day(&self) -> bool {
         matches!(self, Self::DoneForDay)
     }
@@ -36,22 +44,10 @@ impl SetupPhase {
 // Agent
 // ================================================================================================
 
-/// Florian's FVG / Smart-Money Concepts strategy on the 6E Euro FX future (M15,
+/// Fair Value Gap / Smart-Money Concepts strategy on the 6E Euro FX future (M15,
 /// Long only).
-///
-/// Logic:
-/// 1. `StreamingHhll` (`OpenClose`) detects bullish BOS or `CHoCH` on M15.
-/// 2. If active bullish FVGs exist from the current movement → Limit-Order at
-///    the midpoint of the highest FVG (by midpoint price).
-/// 3. SL = LOW(candle at `fvg.creation_index() − 3`) − 1 tick i.e. the candle
-///    directly before the left FVG candle, accessible from the market slice.
-/// 4. TP = running maximum of all confirmed bullish BOS/CHoCH pivot prices
-///    (TP-Extremum).
-/// 5. Any new BOS/CHoCH invalidates a pending order; a bullish one may
-///    immediately spawn a new order.
-/// 6. Open positions and pending orders are closed/cancelled at 22:00 CET/CEST.
 #[derive(Debug, Clone, Serialize)]
-pub struct FlorianFvgAgent {
+pub struct FvgAgent {
     #[serde(skip)]
     m15_id: OhlcvId,
 
@@ -88,7 +84,7 @@ pub struct FlorianFvgAgent {
     agent_id: AgentIdentifier,
 }
 
-impl FlorianFvgAgent {
+impl FvgAgent {
     pub async fn env() -> Result<Environment> {
         let source = self_hosted_source();
         let m15_query = OhlcvFutureQuery {
@@ -143,18 +139,18 @@ impl FlorianFvgAgent {
             last_m15_ts: None,
             last_berlin_date: None,
             trade_counter: 0,
-            agent_id: AgentIdentifier::Named(Arc::new("FlorianFvg".to_string())),
+            agent_id: AgentIdentifier::Named(Arc::new("FvgAgent".to_string())),
         }
     }
 }
 
-impl Default for FlorianFvgAgent {
+impl Default for FvgAgent {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl Agent for FlorianFvgAgent {
+impl Agent for FvgAgent {
     fn identifier(&self) -> AgentIdentifier {
         self.agent_id.clone()
     }
@@ -219,7 +215,7 @@ impl Agent for FlorianFvgAgent {
         }
 
         // ── If InTrade: maintain HHLL/FVG state but wait for TP/SL ──────────
-        if let SetupPhase::InTrade { .. } = self.setup_phase {
+        if self.setup_phase.is_in_trade() {
             if obs.states.any_active_trade_for_agent(&self.identifier()) {
                 let m15_index = obs.market_view.ohlcv().len(&self.m15_id).saturating_sub(1);
                 self.m15_hhll.update(IndexedOhlcv {
@@ -300,9 +296,7 @@ impl Agent for FlorianFvgAgent {
                     .get_slice(&self.m15_id)
                     .unwrap_or(&[]);
                 let open_action = if let Some(fvg) = best_fvg {
-                    if matches!(self.setup_phase, SetupPhase::Scanning)
-                        && self.tp_extremum.is_some()
-                    {
+                    if self.setup_phase.is_scanning() && self.tp_extremum.is_some() {
                         self.try_place_order(&fvg, slice, candle.close_timestamp)
                     } else {
                         None
@@ -330,7 +324,7 @@ impl Agent for FlorianFvgAgent {
     }
 }
 
-impl FlorianFvgAgent {
+impl FvgAgent {
     /// Picks the bullish FVG with the highest midpoint from the current
     /// movement.
     ///
@@ -437,11 +431,11 @@ impl FlorianFvgAgent {
 // Grid Search Builder
 // ================================================================================================
 
-pub struct FlorianFvgAgentGrid;
+pub struct FvgAgentGrid;
 
-impl FlorianFvgAgentGrid {
-    pub fn build() -> Vec<(usize, FlorianFvgAgent)> {
-        vec![(0, FlorianFvgAgent::new())]
+impl FvgAgentGrid {
+    pub fn build() -> Vec<(usize, FvgAgent)> {
+        vec![(0, FvgAgent::new())]
     }
 }
 

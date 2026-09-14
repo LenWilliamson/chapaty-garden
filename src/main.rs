@@ -10,7 +10,7 @@ use crate::agents::{
     demo::{DemoAgent, DemoAgentGrid},
     news::{NewsBreakout, NewsBreakoutGrid, NewsFade, NewsFadeGrid, NewsHybrid, NewsHybridGrid},
     overnight::{UsOpenReversalAgent, UsOpenReversalAgentGrid},
-    smc::{FlorianFvgAgent, FlorianFvgAgentGrid},
+    smc::{FvgAgent, FvgAgentGrid},
 };
 
 mod agents;
@@ -97,9 +97,9 @@ async fn run() -> Result<()> {
         }
         ActiveAgent::FairValueGap => {
             backtest(
-                &mut FlorianFvgAgent::env().await?,
-                FlorianFvgAgent::new(),
-                FlorianFvgAgentGrid::build(),
+                &mut FvgAgent::env().await?,
+                FvgAgent::new(),
+                FvgAgentGrid::build(),
             )
             .await
         }

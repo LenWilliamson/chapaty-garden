@@ -1,4 +1,4 @@
-# Formal Specification: Florian's FVG (Long-Only)
+# Formal Specification: Smart Money Concepts / Fair Value Gap (Long-Only)
 
 ## 1. Market / Asset
 

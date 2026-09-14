@@ -10,7 +10,7 @@ use serde_with::{DurationSeconds, serde_as};
 use crate::agents::news::NewsPhase;
 
 #[serde_as]
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct NewsFade {
     #[serde(skip)]
     economic_cal_id: EconomicCalendarId,
@@ -127,6 +127,9 @@ pub struct NewsFade {
     ///Track the last news we already handled to prevent re-entry
     #[serde(skip)]
     last_processed_news: Option<DateTime<Utc>>,
+
+    #[serde(skip)]
+    agent_id: AgentIdentifier,
 }
 
 impl NewsFade {
@@ -142,19 +145,16 @@ impl NewsFade {
             .context("Failed to load trading environment")
     }
     pub fn new() -> Self {
-        Self::baseline(default_economic_cal_id(), default_ohlcv_id())
-    }
-
-    pub fn baseline(economic_cal_id: EconomicCalendarId, ohlcv_id: OhlcvId) -> Self {
         Self {
-            economic_cal_id,
-            ohlcv_id,
+            economic_cal_id: economic_cal_id(),
+            ohlcv_id: ohlcv_id(),
             wait_duration: Duration::seconds(420),
             take_profit_risk_factor: 1.27,
             risk_reward_ratio: 0.276,
             phase: NewsPhase::default(),
             trade_counter: 0,
             last_processed_news: None,
+            agent_id: AgentIdentifier::Named(Arc::new("NewsFade".to_string())),
         }
     }
 
@@ -162,14 +162,14 @@ impl NewsFade {
         self.ohlcv_id
     }
 
-    pub const fn with_candles_after_news(self, duration: Duration) -> Self {
+    pub fn with_candles_after_news(self, duration: Duration) -> Self {
         Self {
             wait_duration: duration,
             ..self
         }
     }
 
-    pub const fn with_take_profit_risk_factor(self, factor: f64) -> Self {
+    pub fn with_take_profit_risk_factor(self, factor: f64) -> Self {
         Self {
             take_profit_risk_factor: factor,
             ..self
@@ -226,6 +226,16 @@ impl NewsFade {
 }
 
 impl Agent for NewsFade {
+    fn identifier(&self) -> AgentIdentifier {
+        self.agent_id.clone()
+    }
+
+    fn reset(&mut self) {
+        self.phase = NewsPhase::AwaitingNews;
+        self.trade_counter = 0;
+        self.last_processed_news = None;
+    }
+
     fn act(&mut self, obs: Observation) -> ChapatyResult<Actions> {
         let current_time = obs.market_view.current_timestamp();
 
@@ -235,7 +245,7 @@ impl Agent for NewsFade {
         }
 
         // === 1. Update Phase ===
-        if matches!(self.phase, NewsPhase::AwaitingNews)
+        if self.phase.is_awaiting_news()
             && let Some(news_event) = obs
                 .market_view
                 .economic_news()
@@ -308,16 +318,6 @@ impl Agent for NewsFade {
 
         Ok(Actions::from((self.ohlcv_id.into(), Action::Open(cmd))))
     }
-
-    fn identifier(&self) -> AgentIdentifier {
-        AgentIdentifier::Named(Arc::new("NewsFade".to_string()))
-    }
-
-    fn reset(&mut self) {
-        self.phase = NewsPhase::AwaitingNews;
-        self.trade_counter = 0;
-        self.last_processed_news = None;
-    }
 }
 
 // ================================================================================================
@@ -365,8 +365,6 @@ impl TakeProfitTarget {
 // ================================================================================================
 
 pub struct NewsFadeGrid {
-    cal_id: EconomicCalendarId,
-    ohlcv_id: OhlcvId,
     wait_duration: (Duration, Duration),
     tp_risk_factor: GridAxis,
     risk_reward: GridAxis,
@@ -374,13 +372,8 @@ pub struct NewsFadeGrid {
 
 impl NewsFadeGrid {
     /// Creates a grid generator with a default "Baseline" search space.
-    ///
-    /// This pre-populates the ranges with standard values, ensuring the grid
-    /// is valid immediately.
     pub fn baseline() -> ChapatyResult<Self> {
         Ok(Self {
-            cal_id: default_economic_cal_id(),
-            ohlcv_id: default_ohlcv_id(),
             wait_duration: (Duration::minutes(5), Duration::minutes(30)),
             tp_risk_factor: GridAxis::new("0.5", "3.0", "0.01")?,
             risk_reward: GridAxis::new("0.1", "1.0", "0.01")?,
@@ -402,16 +395,12 @@ impl NewsFadeGrid {
         let take_profit_factors = self.tp_risk_factor.generate();
         let risk_rewards = self.risk_reward.generate();
 
-        // === 2. Eagerly Collect Valid Args ===
-        let cal_id = self.cal_id;
-        let ohlcv_id = self.ohlcv_id;
-
         iproduct!(risk_rewards, candles_after_news, take_profit_factors)
             .enumerate()
             .map(|(uid, (rrr, wait, tprf))| {
                 (
                     uid,
-                    NewsFade::baseline(cal_id, ohlcv_id)
+                    NewsFade::new()
                         .with_candles_after_news(wait)
                         .with_take_profit_risk_factor(tprf)
                         .with_risk_reward_ratio(rrr)
@@ -426,7 +415,7 @@ impl NewsFadeGrid {
 // Market Data
 // ================================================================================================
 
-const fn default_ohlcv_id() -> OhlcvId {
+const fn ohlcv_id() -> OhlcvId {
     OhlcvId {
         broker: DataBroker::NinjaTrader,
         exchange: Exchange::Cme,
@@ -439,7 +428,7 @@ const fn default_ohlcv_id() -> OhlcvId {
     }
 }
 
-const fn default_economic_cal_id() -> EconomicCalendarId {
+const fn economic_cal_id() -> EconomicCalendarId {
     EconomicCalendarId {
         broker: DataBroker::InvestingCom,
         data_source: None,

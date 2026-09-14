@@ -23,7 +23,7 @@ enum NewsPhase {
 }
 
 impl NewsPhase {
-    fn is_awaiting_news(&self) -> bool {
-        matches!(self, NewsPhase::AwaitingNews)
+    const fn is_awaiting_news(&self) -> bool {
+        matches!(self, Self::AwaitingNews)
     }
 }
