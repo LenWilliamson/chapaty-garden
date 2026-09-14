@@ -2,7 +2,7 @@
 
 ## 1. Market / Asset
 
-- **Symbol/Ticker:** ESM6 (E-mini S&P 500 Future, June 2026 contract)
+- **Symbol/Ticker:** ES, current front-month quarterly contract (E-mini S&P 500 Future)
 - **Type:** Futures
 
 ## 2. Timeframes

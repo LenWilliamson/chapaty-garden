@@ -2,7 +2,7 @@
 
 ## 1. Market / Asset
 
-- 6E Sep 2026 (Euro FX Future)
+- 6E, current front-month quarterly contract (Euro FX Future)
 
 ## 2. Timeframes
 
