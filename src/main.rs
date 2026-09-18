@@ -10,6 +10,7 @@ use crate::agents::{
     demo::{DemoAgent, DemoAgentGrid},
     news::{NewsBreakout, NewsBreakoutGrid, NewsFade, NewsFadeGrid, NewsHybrid, NewsHybridGrid},
     overnight::{UsOpenReversalAgent, UsOpenReversalAgentGrid},
+    scalping::{ScalpingAgent, ScalpingAgentGrid},
     smc::{FvgAgent, FvgAgentGrid},
 };
 
@@ -43,6 +44,7 @@ enum ActiveAgent {
     NewsHybrid,
     FairValueGap,
     Overnight,
+    Scalping,
 }
 
 #[tokio::main]
@@ -103,6 +105,14 @@ async fn run() -> Result<()> {
                 &mut UsOpenReversalAgent::env().await?,
                 UsOpenReversalAgent::new(),
                 UsOpenReversalAgentGrid::baseline().build(),
+            )
+            .await
+        }
+        ActiveAgent::Scalping => {
+            backtest(
+                &mut ScalpingAgent::env().await?,
+                ScalpingAgent::new(),
+                ScalpingAgentGrid::baseline()?.build(),
             )
             .await
         }
