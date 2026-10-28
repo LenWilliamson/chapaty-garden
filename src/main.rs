@@ -8,6 +8,7 @@ use strum::{AsRefStr, Display, EnumString};
 
 use crate::agents::{
     demo::{DemoAgent, DemoAgentGrid},
+    mean_reversion::{MeanReversionAgent, MeanReversionAgentGrid},
     news::{NewsBreakout, NewsBreakoutGrid, NewsFade, NewsFadeGrid, NewsHybrid, NewsHybridGrid},
     overnight::{UsOpenReversalAgent, UsOpenReversalAgentGrid},
     scalping::{ScalpingAgent, ScalpingAgentGrid},
@@ -33,7 +34,7 @@ static RESULTS_CLOUD_URI: LazyLock<Option<String>> =
     LazyLock::new(|| std::env::var("RESULTS_CLOUD_URI").ok());
 
 /// Which agent to run.
-const ACTIVE_AGENT: ActiveAgent = ActiveAgent::Demo;
+const ACTIVE_AGENT: ActiveAgent = ActiveAgent::MeanReversion;
 
 #[derive(Debug, Clone, Copy, AsRefStr, EnumString, Display)]
 #[strum(serialize_all = "lowercase")]
@@ -45,6 +46,7 @@ enum ActiveAgent {
     FairValueGap,
     Overnight,
     Scalping,
+    MeanReversion,
 }
 
 #[tokio::main]
@@ -113,6 +115,14 @@ async fn run() -> Result<()> {
                 &mut ScalpingAgent::env().await?,
                 ScalpingAgent::new(),
                 ScalpingAgentGrid::baseline()?.build(),
+            )
+            .await
+        }
+        ActiveAgent::MeanReversion => {
+            backtest(
+                &mut MeanReversionAgent::env().await?,
+                MeanReversionAgent::new(),
+                MeanReversionAgentGrid::baseline()?.build(),
             )
             .await
         }
