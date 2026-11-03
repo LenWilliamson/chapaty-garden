@@ -158,7 +158,7 @@ async fn run() -> Result<()> {
 /// `(single_agent_time * grid.len()) / cpu_cores`.
 async fn backtest<T>(env: &mut Environment, mut baseline: T, grid: Vec<(usize, T)>) -> Result<()>
 where
-    T: Agent + Send + Serialize,
+    T: Agent + Send + Serialize + 'static,
 {
     let label = baseline.identifier();
 

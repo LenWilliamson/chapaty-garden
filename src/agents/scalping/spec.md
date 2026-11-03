@@ -14,22 +14,22 @@ This is a fast scalping strategy on BTC/USDT, one minute candles. It watches two
 ## 3. Observation Inputs
 
 - `obs.market_view.ohlcv().last_event(&self.ohlcv_id)`, the newest closed one minute candle.
-- A own built indicator called `VwapDeviationBands`, fed with every new candle's close and volume. It returns the basis line and the four band lines once it has enough history.
-- A own built indicator called `ObvRsi`, fed with every new candle's close and volume. It returns a 0 to 100 value once it has enough history.
+- The core indicator `StreamingRollingOhlcvVwap`, fed with every new candle and using the close as price. It returns the basis line and the deviation once the window is full. The agent builds the four band lines from it with `inner_dev_mult` and `outer_dev_mult`.
+- The core indicator `StreamingObvRsi` (Wilder seed, `RsiFlat::Max`), fed with every new candle. It returns a 0 to 100 value once it has enough history.
 - `obs.states`, read through small helper calls, to check how many of this agent's own positions are open right now, and on which side.
 
 ## 4. Entry Logic
 
 Run this once per new closed candle.
 
-1. Feed the new candle into `VwapDeviationBands` and `ObvRsi`.
+1. Feed the new candle into `StreamingRollingOhlcvVwap` and `StreamingObvRsi`.
 2. If either one has no value yet (not enough history, or the volume sum in the window is 0), skip entries this candle, but still do the bookkeeping in step 6.
 3. Work out this candle's zone:
    - Green zone: `LowerDev3 <= close <= LowerDev2`
    - Red zone: `UpperDev2 <= close <= UpperDev3`
 4. Work out the signal:
-   - Long signal is true when close is in the green zone AND `ObvRsi <= rsi_lower`.
-   - Short signal is true when close is in the red zone AND `ObvRsi >= rsi_upper`.
+   - Long signal is true when close is in the green zone AND `StreamingObvRsi <= rsi_lower`.
+   - Short signal is true when close is in the red zone AND `StreamingObvRsi >= rsi_upper`.
 5. A signal only counts as new if the same side signal was not already true on the previous candle. If the previous candle already had a long signal, a long signal on this candle does not count as new, until the price leaves the green zone or the RSI condition breaks at least once in between.
 6. Remember this candle's long and short signal for the next candle's check in step 5, no matter what happens below.
 7. Open a new long position when all of these are true: the long signal is new, no cooldown is active, there is no open short position right now, and fewer than `max_pyramid` long positions are open right now. Open a new short position the same way, mirrored.
@@ -55,10 +55,10 @@ Whenever any one of this agent's positions closes with a loss, for any reason ab
 
 | Field               |  Type   | Default  | Description                                                           | Grid Search Range                    |
 | ------------------- | :-----: | :------: | --------------------------------------------------------------------- | ------------------------------------ |
-| `vwap_window`       | `usize` |   `60`   | How many candles the rolling VWAP window covers.                      | `{40, 50, 60, 70, 80}`               |
+| `vwap_window`       |  `u16`  |   `60`   | How many candles the rolling VWAP window covers.                      | `{40, 50, 60, 70, 80}`               |
 | `inner_dev_mult`    |  `f64`  |  `2.0`   | Multiplier for the inner edge of each band (the Dev 2 line).          | `{1.5, 1.75, 2.0, 2.25, 2.5}`        |
 | `outer_dev_mult`    |  `f64`  |  `3.0`   | Multiplier for the outer edge of each band (the Dev 3 line).          | `{2.5, 2.75, 3.0, 3.25, 3.5}`        |
-| `rsi_length`        | `usize` |   `5`    | How many candles the OBV RSI smoothing covers.                        | `{3, 4, 5, 6, 7, 8}`                 |
+| `rsi_length`        |  `u16`  |   `5`    | How many candles the OBV RSI smoothing covers.                        | `{3, 4, 5, 6, 7, 8}`                 |
 | `rsi_lower`         |  `f64`  |  `30.0`  | OBV RSI has to be at or under this for a long signal.                 | `{20.0, 25.0, 30.0, 35.0}`           |
 | `rsi_upper`         |  `f64`  |  `70.0`  | OBV RSI has to be at or over this for a short signal.                 | `{65.0, 70.0, 75.0, 80.0}`           |
 | `stop_loss_pct`     |  `f64`  | `0.006`  | Stop loss distance from entry, as a fraction (`0.006` is 0.6%).       | `{0.003, 0.005, 0.006, 0.008, 0.01}` |

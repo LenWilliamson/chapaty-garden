@@ -1,218 +1,10 @@
-use std::{collections::VecDeque, sync::Arc};
+use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use chapaty::prelude::*;
 use chrono::{DateTime, Utc};
 use itertools::iproduct;
 use serde::Serialize;
-
-// ================================================================================================
-// Custom Indicator: rolling VWAP with mean absolute deviation bands
-// ================================================================================================
-
-/// The five lines the [`VwapDeviationBands`] indicator produces for one candle.
-#[derive(Debug, Clone, Copy)]
-struct VwapBands {
-    basis: Price,
-    upper_inner: Price,
-    upper_outer: Price,
-    lower_inner: Price,
-    lower_outer: Price,
-}
-
-/// A volume weighted average price over the last `window` candles, plus bands
-/// built from the volume weighted mean absolute deviation around it.
-#[derive(Debug, Clone)]
-struct VwapDeviationBands {
-    window: usize,
-    inner_mult: f64,
-    outer_mult: f64,
-    history: VecDeque<(Volume, Price)>, // (volume, close), oldest first
-}
-
-impl VwapDeviationBands {
-    fn new(window: usize, inner_mult: f64, outer_mult: f64) -> Self {
-        Self {
-            window,
-            inner_mult,
-            outer_mult,
-            history: VecDeque::with_capacity(window),
-        }
-    }
-}
-
-impl StreamingIndicator for VwapDeviationBands {
-    type Input = (Volume, Price);
-    type Output<'a> = Option<VwapBands>;
-
-    fn update(&mut self, (volume, close): Self::Input) -> Self::Output<'_> {
-        self.history.push_back((volume, close));
-        if self.history.len() > self.window {
-            self.history.pop_front();
-        }
-        if self.history.len() < self.window {
-            return None; // still warming up
-        }
-
-        let sum_volume: Volume = self.history.iter().map(|(v, _)| *v).sum();
-        if sum_volume <= Quantity(0.0) {
-            return None; // no volume in the window, basis would divide by zero
-        }
-
-        let basis = Price(self.history.iter().map(|(v, c)| v.0 * c.0).sum::<f64>() / sum_volume.0);
-        let dev = PriceDelta(
-            self.history
-                .iter()
-                .map(|(v, c)| v.0 * (c.0 - basis.0).abs())
-                .sum::<f64>()
-                / sum_volume.0,
-        );
-
-        Some(VwapBands {
-            basis,
-            upper_inner: Price(dev.0.mul_add(self.inner_mult, basis.0)),
-            upper_outer: Price(dev.0.mul_add(self.outer_mult, basis.0)),
-            lower_inner: Price(dev.0.mul_add(-self.inner_mult, basis.0)),
-            lower_outer: Price(dev.0.mul_add(-self.outer_mult, basis.0)),
-        })
-    }
-
-    fn reset(&mut self) {
-        self.history.clear();
-    }
-}
-
-// ================================================================================================
-// Custom Indicator: OBV based RSI (Wilder/Pine style smoothing)
-// ================================================================================================
-
-/// Wilder's smoothed moving average, seeded the way Pine Script's `ta.rma`
-/// does it: the first output is a plain average of the first `length` inputs,
-/// and every input after that folds in with weight `1 / length`.
-#[derive(Debug, Clone, Copy)]
-struct StreamingRma {
-    length: usize,
-    seed_sum: f64,
-    seed_count: usize,
-    value: Option<f64>,
-}
-
-impl StreamingRma {
-    const fn new(length: usize) -> Self {
-        Self {
-            length,
-            seed_sum: 0.0,
-            seed_count: 0,
-            value: None,
-        }
-    }
-}
-
-impl StreamingIndicator for StreamingRma {
-    type Input = Volume;
-    type Output<'a> = Option<Volume>;
-
-    #[expect(
-        clippy::cast_precision_loss,
-        reason = "rma length is always a small window size, well under f64's exact integer range"
-    )]
-    fn update(&mut self, input: Self::Input) -> Self::Output<'_> {
-        match self.value {
-            None => {
-                self.seed_sum += input.0;
-                self.seed_count += 1;
-                if self.seed_count >= self.length {
-                    self.value = Some(self.seed_sum / self.length as f64);
-                }
-                self.value.map(Quantity)
-            }
-            Some(prev) => {
-                let alpha = 1.0 / self.length as f64;
-                let next = alpha.mul_add(input.0 - prev, prev);
-                self.value = Some(next);
-                self.value.map(Quantity)
-            }
-        }
-    }
-
-    fn reset(&mut self) {
-        self.seed_sum = 0.0;
-        self.seed_count = 0;
-        self.value = None;
-    }
-}
-
-/// RSI built from On Balance Volume deltas instead of price deltas.
-///
-/// Every candle either adds its volume (close up), subtracts its volume
-/// (close down), or does nothing (close unchanged) to a running total. This
-/// indicator only needs that per-candle delta, never the running total
-/// itself, so it does not keep the total around.
-#[derive(Debug, Clone, Copy)]
-struct ObvRsi {
-    prev_close: Option<Price>,
-    up: StreamingRma,
-    down: StreamingRma,
-}
-
-impl ObvRsi {
-    const fn new(length: usize) -> Self {
-        Self {
-            prev_close: None,
-            up: StreamingRma::new(length),
-            down: StreamingRma::new(length),
-        }
-    }
-}
-
-impl StreamingIndicator for ObvRsi {
-    type Input = (Volume, Price);
-    type Output<'a> = Option<f64>;
-
-    fn update(&mut self, (volume, close): Self::Input) -> Self::Output<'_> {
-        let Some(prev) = self.prev_close else {
-            self.prev_close = Some(close);
-            return None; // first candle ever, no delta yet
-        };
-        self.prev_close = Some(close);
-
-        // A signed delta, so this stays a plain f64: `Volume` is documented
-        // as generally non-negative, which does not fit here.
-        let delta = if close > prev {
-            volume.0
-        } else if close < prev {
-            -volume.0
-        } else {
-            0.0
-        };
-
-        let up = self.up.update(Quantity(delta.max(0.0)));
-        let down = self.down.update(Quantity((-delta).max(0.0)));
-
-        match (up, down) {
-            (Some(up), Some(down)) => {
-                if down == Quantity(0.0) {
-                    Some(100.0)
-                } else if up == Quantity(0.0) {
-                    Some(0.0)
-                } else {
-                    Some(100.0 - 100.0 / (1.0 + up.0 / down.0))
-                }
-            }
-            _ => None, // still warming up
-        }
-    }
-
-    fn reset(&mut self) {
-        self.prev_close = None;
-        self.up.reset();
-        self.down.reset();
-    }
-}
-
-// ================================================================================================
-// Agent
-// ================================================================================================
 
 /// One open scalp position, remembered by the agent itself.
 ///
@@ -236,10 +28,10 @@ pub struct ScalpingAgent {
     ohlcv_id: OhlcvId,
 
     // === Parameters (grid search sweeps these) ===
-    vwap_window: usize,
+    vwap_window: u16,
     inner_dev_mult: f64,
     outer_dev_mult: f64,
-    rsi_length: usize,
+    rsi_length: u16,
     rsi_lower: f64,
     rsi_upper: f64,
     stop_loss_pct: f64,
@@ -250,9 +42,9 @@ pub struct ScalpingAgent {
 
     // === Indicators ===
     #[serde(skip)]
-    vwap_bands: VwapDeviationBands,
+    vwap: StreamingRollingOhlcvVwap,
     #[serde(skip)]
-    obv_rsi: ObvRsi,
+    obv_rsi: StreamingObvRsi,
 
     // === Trading state ===
     #[serde(skip)]
@@ -313,8 +105,8 @@ impl ScalpingAgent {
             max_pyramid: 3,
             cooldown_bars: 10,
             position_size_usd: 1000.0,
-            vwap_bands: VwapDeviationBands::new(vwap_window, inner_dev_mult, outer_dev_mult),
-            obv_rsi: ObvRsi::new(rsi_length),
+            vwap: rolling_vwap(vwap_window),
+            obv_rsi: obv_rsi(rsi_length),
             long_positions: Vec::new(),
             short_positions: Vec::new(),
             prev_basis: None,
@@ -327,14 +119,10 @@ impl ScalpingAgent {
         }
     }
 
-    pub fn with_vwap_window(self, vwap_window: usize) -> Self {
+    pub fn with_vwap_window(self, vwap_window: u16) -> Self {
         Self {
             vwap_window,
-            vwap_bands: VwapDeviationBands::new(
-                vwap_window,
-                self.inner_dev_mult,
-                self.outer_dev_mult,
-            ),
+            vwap: rolling_vwap(vwap_window),
             ..self
         }
     }
@@ -342,11 +130,6 @@ impl ScalpingAgent {
     pub fn with_inner_dev_mult(self, inner_dev_mult: f64) -> Self {
         Self {
             inner_dev_mult,
-            vwap_bands: VwapDeviationBands::new(
-                self.vwap_window,
-                inner_dev_mult,
-                self.outer_dev_mult,
-            ),
             ..self
         }
     }
@@ -354,19 +137,14 @@ impl ScalpingAgent {
     pub fn with_outer_dev_mult(self, outer_dev_mult: f64) -> Self {
         Self {
             outer_dev_mult,
-            vwap_bands: VwapDeviationBands::new(
-                self.vwap_window,
-                self.inner_dev_mult,
-                outer_dev_mult,
-            ),
             ..self
         }
     }
 
-    pub fn with_rsi_length(self, rsi_length: usize) -> Self {
+    pub fn with_rsi_length(self, rsi_length: u16) -> Self {
         Self {
             rsi_length,
-            obv_rsi: ObvRsi::new(rsi_length),
+            obv_rsi: obv_rsi(rsi_length),
             ..self
         }
     }
@@ -439,7 +217,7 @@ impl Agent for ScalpingAgent {
     }
 
     fn reset(&mut self) {
-        self.vwap_bands.reset();
+        self.vwap.reset();
         self.obv_rsi.reset();
         self.long_positions.clear();
         self.short_positions.clear();
@@ -469,7 +247,7 @@ impl Agent for ScalpingAgent {
         // Uses `self.prev_basis`, which still holds the previous candle's
         // basis at this point, before it gets updated further down. Each
         // side builds its own actions independently, then the two batches
-        // are joined below.
+        // are merged below.
         let long_exit = check_exits(CheckExitsInput {
             trade_kind: TradeKind::Long,
             positions: std::mem::take(&mut self.long_positions),
@@ -493,7 +271,9 @@ impl Agent for ScalpingAgent {
             actions: Actions::new(),
         });
         self.short_positions = short_exit.positions;
-        let mut actions = short_exit.actions.join(long_exit.actions);
+
+        let mut actions = short_exit.actions;
+        actions.extend([long_exit.actions]);
 
         if long_exit.cooldown_hit || short_exit.cooldown_hit {
             self.cooldown_remaining = self.cooldown_bars;
@@ -503,8 +283,8 @@ impl Agent for ScalpingAgent {
         }
 
         // === Update indicators ===
-        let bands = self.vwap_bands.update((candle.volume, candle.close));
-        let rsi = self.obv_rsi.update((candle.volume, candle.close));
+        let bands = self.vwap.update(*candle);
+        let rsi = self.obv_rsi.update(*candle);
 
         // === Entry logic ===
         if let Some(bands) = bands
@@ -628,8 +408,12 @@ impl ScalpingAgent {
         actions: &mut Actions,
     ) {
         let close = candle.close;
-        let in_green_zone = close >= bands.lower_outer && close <= bands.lower_inner;
-        let in_red_zone = close >= bands.upper_inner && close <= bands.upper_outer;
+        let lower_outer = bands.lower(self.outer_dev_mult);
+        let lower_inner = bands.lower(self.inner_dev_mult);
+        let upper_inner = bands.upper(self.inner_dev_mult);
+        let upper_outer = bands.upper(self.outer_dev_mult);
+        let in_green_zone = close >= lower_outer && close <= lower_inner;
+        let in_red_zone = close >= upper_inner && close <= upper_outer;
 
         let long_signal = in_green_zone && rsi <= self.rsi_lower;
         let short_signal = in_red_zone && rsi >= self.rsi_upper;
@@ -715,31 +499,15 @@ const fn close_market(agent_id: AgentIdentifier, trade_id: TradeId) -> Action {
     })
 }
 
-/// Combines two independently built [`Actions`] batches into one.
-trait ActionsExt {
-    fn join(self, other: Self) -> Self;
-}
-
-impl ActionsExt for Actions {
-    fn join(self, other: Self) -> Self {
-        other
-            .into_sorted_iter()
-            .fold(self, |mut acc, (market_id, action)| {
-                acc.add(market_id, action);
-                acc
-            })
-    }
-}
-
 // ================================================================================================
 // Grid Search Builder
 // ================================================================================================
 
 pub struct ScalpingAgentGrid {
-    vwap_window: Vec<usize>,
+    vwap_window: Vec<u16>,
     inner_dev_mult: GridAxis,
     outer_dev_mult: GridAxis,
-    rsi_length: Vec<usize>,
+    rsi_length: Vec<u16>,
     rsi_lower: GridAxis,
     rsi_upper: GridAxis,
     stop_loss_pct: GridAxis,
@@ -838,6 +606,18 @@ impl ScalpingAgentGrid {
 // ================================================================================================
 // Market Data
 // ================================================================================================
+
+/// Rolling VWAP on the close only, to match the original strategy rules.
+/// The default price source would be `Hlc3`.
+fn rolling_vwap(window: u16) -> StreamingRollingOhlcvVwap {
+    StreamingRollingOhlcvVwap::new(VwapWindow(window), AggregatedPrice::Close)
+}
+
+/// `EwmSeed::Sma` is Wilder's seed. `RsiFlat::Max` reports 100.0 when the
+/// window has no movement at all, which keeps the short side tradable there.
+fn obv_rsi(length: u16) -> StreamingObvRsi {
+    StreamingObvRsi::new(RsiWindow(length), EwmSeed::Sma, RsiFlat::Max)
+}
 
 const fn ohlcv_id() -> OhlcvId {
     OhlcvId {
