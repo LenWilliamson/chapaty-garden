@@ -8,8 +8,10 @@ use strum::{AsRefStr, Display, EnumString};
 
 use crate::agents::{
     demo::{DemoAgent, DemoAgentGrid},
+    mean_reversion::{MeanReversionAgent, MeanReversionAgentGrid},
     news::{NewsBreakout, NewsBreakoutGrid, NewsFade, NewsFadeGrid, NewsHybrid, NewsHybridGrid},
     overnight::{UsOpenReversalAgent, UsOpenReversalAgentGrid},
+    scalping::{ScalpingAgent, ScalpingAgentGrid},
     smc::{FvgAgent, FvgAgentGrid},
 };
 
@@ -43,6 +45,8 @@ enum ActiveAgent {
     NewsHybrid,
     FairValueGap,
     Overnight,
+    Scalping,
+    MeanReversion,
 }
 
 #[tokio::main]
@@ -106,6 +110,22 @@ async fn run() -> Result<()> {
             )
             .await
         }
+        ActiveAgent::Scalping => {
+            backtest(
+                &mut ScalpingAgent::env().await?,
+                ScalpingAgent::new(),
+                ScalpingAgentGrid::baseline()?.build(),
+            )
+            .await
+        }
+        ActiveAgent::MeanReversion => {
+            backtest(
+                &mut MeanReversionAgent::env().await?,
+                MeanReversionAgent::new(),
+                MeanReversionAgentGrid::baseline()?.build(),
+            )
+            .await
+        }
     }
 }
 
@@ -138,7 +158,7 @@ async fn run() -> Result<()> {
 /// `(single_agent_time * grid.len()) / cpu_cores`.
 async fn backtest<T>(env: &mut Environment, mut baseline: T, grid: Vec<(usize, T)>) -> Result<()>
 where
-    T: Agent + Send + Serialize,
+    T: Agent + Send + Serialize + 'static,
 {
     let label = baseline.identifier();
 
