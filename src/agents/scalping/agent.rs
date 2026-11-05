@@ -6,6 +6,71 @@ use chrono::{DateTime, Utc};
 use itertools::iproduct;
 use serde::Serialize;
 
+/// The side of one scalp. It is the entry signal of a candle (spec section 4)
+/// and also the side of the book a position sits in. Strategy local on
+/// purpose, so the strategy logic does not depend on library types. It is
+/// converted once, in `open_position`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Side {
+    /// Close is in the green zone and the OBV RSI is at or under `rsi_lower`.
+    /// Buy.
+    Long,
+    /// Close is in the red zone and the OBV RSI is at or over `rsi_upper`.
+    /// Sell short.
+    Short,
+}
+
+impl From<Side> for TradeKind {
+    fn from(side: Side) -> Self {
+        match side {
+            Side::Long => Self::Long,
+            Side::Short => Self::Short,
+        }
+    }
+}
+
+/// The exit that closed a position on a candle (spec section 5). Per position
+/// the first one that fires wins, checked in the order of the variants below.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ExitTrigger {
+    /// The candle touched the position's own stop loss. Always a loss.
+    StopLoss,
+    /// The candle touched the previous candle's basis line, and that basis is
+    /// strictly on the losing side of the position's entry price. A loss.
+    MidLineAtLoss,
+    /// The candle touched the previous candle's basis line, and that basis is
+    /// not strictly on the losing side of the position's entry price. Not a
+    /// loss.
+    MidLineAtProfit,
+    /// The candle touched the position's own take profit. Always a win.
+    TakeProfit,
+}
+
+impl ExitTrigger {
+    /// True for the triggers that count as a loss: `StopLoss` and
+    /// `MidLineAtLoss`.
+    const fn is_loss(self) -> bool {
+        matches!(self, Self::StopLoss | Self::MidLineAtLoss)
+    }
+}
+
+/// Whether the exits of one side on a candle hurt. Decides if the cooldown
+/// starts (spec section 6).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ExitVerdict {
+    /// Nothing closed, or every position that closed made money.
+    NoLoss,
+    /// At least one position closed at a loss. Starts the cooldown.
+    AtLeastOneLoss,
+}
+
+impl ExitVerdict {
+    /// True for `AtLeastOneLoss`.
+    const fn is_loss(self) -> bool {
+        matches!(self, Self::AtLeastOneLoss)
+    }
+}
+
 /// One open scalp position, remembered by the agent itself.
 ///
 /// The order sent to the engine carries no stop loss or take profit. This
@@ -56,10 +121,12 @@ pub struct ScalpingAgent {
     /// forming avoids look ahead.
     #[serde(skip)]
     prev_basis: Option<Price>,
+    /// The previous candle's signal, `None` if it had none or the indicators
+    /// had no value. A signal only counts as new if it differs from this one,
+    /// so a candle that stays in the zone does not open another position on
+    /// its own, while a direct flip from `Long` to `Short` is new.
     #[serde(skip)]
-    prev_long_signal: bool,
-    #[serde(skip)]
-    prev_short_signal: bool,
+    prev_signal: Option<Side>,
     #[serde(skip)]
     cooldown_remaining: u32,
     #[serde(skip)]
@@ -110,8 +177,7 @@ impl ScalpingAgent {
             long_positions: Vec::new(),
             short_positions: Vec::new(),
             prev_basis: None,
-            prev_long_signal: false,
-            prev_short_signal: false,
+            prev_signal: None,
             cooldown_remaining: 0,
             trade_counter: 0,
             last_processed_ts: None,
@@ -192,17 +258,6 @@ impl ScalpingAgent {
             ..self
         }
     }
-
-    #[expect(
-        dead_code,
-        reason = "public API for picking a real position size by hand once a good rule is found, deliberately not swept by the grid search"
-    )]
-    pub fn with_position_size_usd(self, position_size_usd: f64) -> Self {
-        Self {
-            position_size_usd,
-            ..self
-        }
-    }
 }
 
 impl Default for ScalpingAgent {
@@ -222,8 +277,7 @@ impl Agent for ScalpingAgent {
         self.long_positions.clear();
         self.short_positions.clear();
         self.prev_basis = None;
-        self.prev_long_signal = false;
-        self.prev_short_signal = false;
+        self.prev_signal = None;
         self.cooldown_remaining = 0;
         self.trade_counter = 0;
         self.last_processed_ts = None;
@@ -249,7 +303,7 @@ impl Agent for ScalpingAgent {
         // side builds its own actions independently, then the two batches
         // are merged below.
         let long_exit = check_exits(CheckExitsInput {
-            trade_kind: TradeKind::Long,
+            side: Side::Long,
             positions: std::mem::take(&mut self.long_positions),
             candle_high: candle.high,
             candle_low: candle.low,
@@ -261,7 +315,7 @@ impl Agent for ScalpingAgent {
         self.long_positions = long_exit.positions;
 
         let short_exit = check_exits(CheckExitsInput {
-            trade_kind: TradeKind::Short,
+            side: Side::Short,
             positions: std::mem::take(&mut self.short_positions),
             candle_high: candle.high,
             candle_low: candle.low,
@@ -275,11 +329,15 @@ impl Agent for ScalpingAgent {
         let mut actions = short_exit.actions;
         actions.extend([long_exit.actions]);
 
-        if long_exit.cooldown_hit || short_exit.cooldown_hit {
-            self.cooldown_remaining = self.cooldown_bars;
-        }
+        // Count down first, then arm. `try_enter` below blocks entries while
+        // the counter is above 0. The `+ 1` accounts for the exit candle
+        // itself, so the exit candle plus the next `cooldown_bars` candles are
+        // blocked.
         if self.cooldown_remaining > 0 {
             self.cooldown_remaining -= 1;
+        }
+        if long_exit.verdict.is_loss() || short_exit.verdict.is_loss() {
+            self.cooldown_remaining = self.cooldown_bars + 1;
         }
 
         // === Update indicators ===
@@ -295,8 +353,7 @@ impl Agent for ScalpingAgent {
         } else {
             // Indicators still warming up, or the volume in the window is 0.
             // No signal is possible, so the "new signal" memory resets too.
-            self.prev_long_signal = false;
-            self.prev_short_signal = false;
+            self.prev_signal = None;
         }
 
         Ok(actions)
@@ -310,7 +367,7 @@ struct CheckExitsInput {
     /// Which side of the book this call checks. Long positions get hit on
     /// the candle's low and take profit on the high, short positions the
     /// other way around.
-    trade_kind: TradeKind,
+    side: Side,
     /// The open positions on this side, checked oldest first.
     positions: Vec<Position>,
     candle_high: Price,
@@ -331,16 +388,16 @@ struct CheckExitsInput {
 struct CheckExitsOutput {
     positions: Vec<Position>,
     actions: Actions,
-    /// True if a stop loss fired, or a middle line exit closed a position
-    /// for less than it was bought or sold for. Arms the cooldown.
-    cooldown_hit: bool,
+    /// Arms the cooldown when a stop loss fired, or a middle line exit closed
+    /// a position for less than it was bought or sold for.
+    verdict: ExitVerdict,
 }
 
 /// Checks every open position on one side for a stop loss, middle line, or
 /// take profit exit, in that exact order, and closes the ones that fire.
 fn check_exits(input: CheckExitsInput) -> CheckExitsOutput {
     let CheckExitsInput {
-        trade_kind,
+        side,
         positions,
         candle_high,
         candle_low,
@@ -349,50 +406,71 @@ fn check_exits(input: CheckExitsInput) -> CheckExitsOutput {
         market_id,
         mut actions,
     } = input;
-    let mut cooldown_hit = false;
+    let mut verdict = ExitVerdict::NoLoss;
 
     let positions = positions
         .into_iter()
         .filter(|pos| {
-            let (stop_hit, midline_hit, midline_is_loss, take_profit_hit) = match trade_kind {
-                TradeKind::Long => (
-                    candle_low <= pos.stop_loss,
-                    prev_basis.is_some_and(|basis| candle_high >= basis),
-                    prev_basis.is_some_and(|basis| basis < pos.entry_price),
-                    candle_high >= pos.take_profit,
-                ),
-                TradeKind::Short => (
-                    candle_high >= pos.stop_loss,
-                    prev_basis.is_some_and(|basis| candle_low <= basis),
-                    prev_basis.is_some_and(|basis| basis > pos.entry_price),
-                    candle_low <= pos.take_profit,
-                ),
+            let Some(trigger) = exit_trigger(side, pos, candle_high, candle_low, prev_basis) else {
+                return true; // nothing fired, the position stays open
             };
-
-            if stop_hit {
-                actions.add(market_id, close_market(agent_id.clone(), pos.trade_id));
-                cooldown_hit = true;
-                return false;
+            actions.add(market_id, close_market(agent_id.clone(), pos.trade_id));
+            if trigger.is_loss() {
+                verdict = ExitVerdict::AtLeastOneLoss;
             }
-            if midline_hit {
-                actions.add(market_id, close_market(agent_id.clone(), pos.trade_id));
-                if midline_is_loss {
-                    cooldown_hit = true;
-                }
-                return false;
-            }
-            if take_profit_hit {
-                actions.add(market_id, close_market(agent_id.clone(), pos.trade_id));
-                return false;
-            }
-            true
+            false
         })
         .collect();
 
     CheckExitsOutput {
         positions,
         actions,
-        cooldown_hit,
+        verdict,
+    }
+}
+
+/// The first exit trigger that fires for one position on this candle, checked
+/// in the order stop loss, middle line, take profit. `None` if none of them
+/// fires. A middle line exit is a loss only when the previous basis is
+/// strictly on the losing side of the entry price.
+fn exit_trigger(
+    side: Side,
+    pos: &Position,
+    candle_high: Price,
+    candle_low: Price,
+    prev_basis: Option<Price>,
+) -> Option<ExitTrigger> {
+    match side {
+        Side::Long => {
+            if candle_low <= pos.stop_loss {
+                return Some(ExitTrigger::StopLoss);
+            }
+            if let Some(basis) = prev_basis
+                && candle_high >= basis
+            {
+                return Some(if basis < pos.entry_price {
+                    ExitTrigger::MidLineAtLoss
+                } else {
+                    ExitTrigger::MidLineAtProfit
+                });
+            }
+            (candle_high >= pos.take_profit).then_some(ExitTrigger::TakeProfit)
+        }
+        Side::Short => {
+            if candle_high >= pos.stop_loss {
+                return Some(ExitTrigger::StopLoss);
+            }
+            if let Some(basis) = prev_basis
+                && candle_low <= basis
+            {
+                return Some(if basis > pos.entry_price {
+                    ExitTrigger::MidLineAtLoss
+                } else {
+                    ExitTrigger::MidLineAtProfit
+                });
+            }
+            (candle_low <= pos.take_profit).then_some(ExitTrigger::TakeProfit)
+        }
     }
 }
 
@@ -407,44 +485,59 @@ impl ScalpingAgent {
         market_id: MarketId,
         actions: &mut Actions,
     ) {
-        let close = candle.close;
-        let lower_outer = bands.lower(self.outer_dev_mult);
-        let lower_inner = bands.lower(self.inner_dev_mult);
-        let upper_inner = bands.upper(self.inner_dev_mult);
-        let upper_outer = bands.upper(self.outer_dev_mult);
-        let in_green_zone = close >= lower_outer && close <= lower_inner;
-        let in_red_zone = close >= upper_inner && close <= upper_outer;
-
-        let long_signal = in_green_zone && rsi <= self.rsi_lower;
-        let short_signal = in_red_zone && rsi >= self.rsi_upper;
+        let signal = self.entry_signal(candle.close, bands, rsi);
 
         // A signal only counts as new if the previous candle did not already
         // have the same one. Otherwise every candle spent inside the zone
         // would open another position on its own.
-        let new_long_signal = long_signal && !self.prev_long_signal;
-        let new_short_signal = short_signal && !self.prev_short_signal;
+        let prev_signal = std::mem::replace(&mut self.prev_signal, signal);
 
-        let no_cooldown = self.cooldown_remaining == 0;
-        let room_for_long = self.short_positions.is_empty()
-            && self.long_positions.len() < usize::from(self.max_pyramid);
-        let room_for_short = self.long_positions.is_empty()
-            && self.short_positions.len() < usize::from(self.max_pyramid);
-
-        if new_long_signal && no_cooldown && room_for_long {
-            self.open_position(TradeKind::Long, close, market_id, actions);
-        } else if new_short_signal && no_cooldown && room_for_short {
-            self.open_position(TradeKind::Short, close, market_id, actions);
+        if let Some(signal) = signal
+            && prev_signal != Some(signal)
+            && self.cooldown_is_over()
+            && self.has_room_for(signal)
+        {
+            self.open_position(signal, candle.close, market_id, actions);
         }
+    }
 
-        self.prev_long_signal = long_signal;
-        self.prev_short_signal = short_signal;
+    /// The signal of one candle (spec section 4, step 4). The grid keeps
+    /// `outer_dev_mult > inner_dev_mult` and `rsi_upper > rsi_lower`, so a
+    /// candle carries at most one signal.
+    fn entry_signal(&self, close: Price, bands: VwapBands, rsi: f64) -> Option<Side> {
+        let in_green_zone =
+            close >= bands.lower(self.outer_dev_mult) && close <= bands.lower(self.inner_dev_mult);
+        let in_red_zone =
+            close >= bands.upper(self.inner_dev_mult) && close <= bands.upper(self.outer_dev_mult);
+
+        if in_green_zone && rsi <= self.rsi_lower {
+            Some(Side::Long)
+        } else if in_red_zone && rsi >= self.rsi_upper {
+            Some(Side::Short)
+        } else {
+            None
+        }
+    }
+
+    const fn cooldown_is_over(&self) -> bool {
+        self.cooldown_remaining == 0
+    }
+
+    /// A side may only grow while the opposite side is empty, and only up to
+    /// `max_pyramid` positions.
+    fn has_room_for(&self, side: Side) -> bool {
+        let (same, opposite) = match side {
+            Side::Long => (&self.long_positions, &self.short_positions),
+            Side::Short => (&self.short_positions, &self.long_positions),
+        };
+        opposite.is_empty() && same.len() < usize::from(self.max_pyramid)
     }
 
     /// Opens a market order and remembers this position's own stop loss and
     /// take profit for `check_exits` to use later.
     fn open_position(
         &mut self,
-        trade_kind: TradeKind,
+        side: Side,
         raw_entry_price: Price,
         market_id: MarketId,
         actions: &mut Actions,
@@ -452,12 +545,12 @@ impl ScalpingAgent {
         let symbol = &self.ohlcv_id.symbol;
         let entry_price = Price(symbol.normalize_price(raw_entry_price.0));
 
-        let (stop_loss, take_profit) = match trade_kind {
-            TradeKind::Long => (
+        let (stop_loss, take_profit) = match side {
+            Side::Long => (
                 Price(symbol.normalize_price(entry_price.0 * (1.0 - self.stop_loss_pct))),
                 Price(symbol.normalize_price(entry_price.0 * (1.0 + self.take_profit_pct))),
             ),
-            TradeKind::Short => (
+            Side::Short => (
                 Price(symbol.normalize_price(entry_price.0 * (1.0 + self.stop_loss_pct))),
                 Price(symbol.normalize_price(entry_price.0 * (1.0 - self.take_profit_pct))),
             ),
@@ -470,7 +563,7 @@ impl ScalpingAgent {
         let cmd = OpenCmd {
             agent_id: self.identifier(),
             trade_id,
-            trade_kind,
+            trade_kind: side.into(),
             quantity,
             entry_price: None, // market order, fills at the current close
             stop_loss: None,   // this agent closes itself, see check_exits
@@ -484,9 +577,9 @@ impl ScalpingAgent {
             stop_loss,
             take_profit,
         };
-        match trade_kind {
-            TradeKind::Long => self.long_positions.push(position),
-            TradeKind::Short => self.short_positions.push(position),
+        match side {
+            Side::Long => self.long_positions.push(position),
+            Side::Short => self.short_positions.push(position),
         }
     }
 }
@@ -610,13 +703,22 @@ impl ScalpingAgentGrid {
 /// Rolling VWAP on the close only, to match the original strategy rules.
 /// The default price source would be `Hlc3`.
 fn rolling_vwap(window: u16) -> StreamingRollingOhlcvVwap {
-    StreamingRollingOhlcvVwap::new(VwapWindow(window), AggregatedPrice::Close)
+    let cfg = RollingVwapConfig {
+        window: VwapWindow(window),
+        deviation: DeviationKind::MeanAbsolute,
+    };
+    StreamingRollingOhlcvVwap::new(cfg).with_aggregated_price(AggregatedPrice::Close)
 }
 
 /// `EwmSeed::Sma` is Wilder's seed. `RsiFlat::Max` reports 100.0 when the
 /// window has no movement at all, which keeps the short side tradable there.
 fn obv_rsi(length: u16) -> StreamingObvRsi {
-    StreamingObvRsi::new(RsiWindow(length), EwmSeed::Sma, RsiFlat::Max)
+    let cfg = RsiConfig {
+        window: RsiWindow(length),
+        seed: EwmSeed::Sma,
+        flat: RsiFlat::Max,
+    };
+    StreamingObvRsi::new(cfg)
 }
 
 const fn ohlcv_id() -> OhlcvId {

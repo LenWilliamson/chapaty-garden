@@ -181,13 +181,13 @@ impl MeanReversionAgent {
         let lower_closes = pairs()?.all(|(n, o)| n.close.0 < o.close.0);
         let higher_closes = pairs()?.all(|(n, o)| n.close.0 > o.close.0);
 
-        let recent = view
+        let (lowest, highest) = view
             .ohlcv()
             .rev_iter(&self.ohlcv_id)?
-            .take(self.range_lookback);
-        let (lowest, highest) = recent.fold((f64::MAX, f64::MIN), |(lo, hi), c| {
-            (lo.min(c.low.0), hi.max(c.high.0))
-        });
+            .take(self.range_lookback)
+            .fold((f64::MAX, f64::MIN), |(lo, hi), c| {
+                (lo.min(c.low.0), hi.max(c.high.0))
+            });
 
         if lower_closes && candle.low.0 <= lowest && candle.close.0 > sma {
             Some(TradeKind::Long)
