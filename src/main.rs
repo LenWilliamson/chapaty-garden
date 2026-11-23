@@ -98,7 +98,7 @@ async fn run() -> Result<()> {
             backtest(
                 &mut FvgAgent::env().await?,
                 FvgAgent::new(),
-                FvgAgentGrid::build(),
+                FvgAgentGrid::baseline()?.build(),
             )
             .await
         }

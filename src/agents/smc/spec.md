@@ -12,16 +12,17 @@
 
 - **Higher High Lower Low (HHLL)**
   - Author: LoneSome
-  - Settings: ZigZag window of **1 bar** on each side (left bars = right bars = 1), alternation mode **Alternating**, tiebreaker **Latest**, price source **Open/Close**.
+  - Settings: ZigZag window of `zig_zag_bars` on each side (left bars = right bars, default **1 bar**), alternation mode **Alternating**, tiebreaker **Latest**, price source **Open/Close**.
   - Alternating means a new pivot of the same type as the last confirmed one is only kept if it is more extreme. The weaker one is discarded as noise.
   - Latest means on a price tie the later bar wins.
   - Open/Close means a `High` pivot reads the candle's close on a bullish or doji candle, and its open on a bearish candle. A `Low` pivot does the opposite.
 
 - **Fair Value Gap / FVG**
   - Author: Nephew_Sam
-  - Settings: price source **Open/Close**, TTL policy **Filled**.
+  - Settings: price source **Open/Close**, TTL policy **Time, 24 hours**.
   - Open/Close means the gap is considered filled once a later candle's body (not just its wick) reaches the gap boundary.
-  - Filled means the gap stays tracked as active until it is actually filled.
+  - Time, 24 hours means a gap stays tracked as active until it is filled or until it is 24 hours old, whichever comes first. An expired gap can no longer be selected for an entry, even if the current movement started earlier.
+  - Why not Filled: with Filled, gaps far from the price are never filled and stay open for years. Every candle then checks every open gap, which made the backtest much slower.
 
 ## 4. Definitions
 
@@ -36,8 +37,8 @@
 3. **Invalidate any pending order:** If an order is currently pending (not yet filled), it is cancelled. This happens on any new BOS/CHoCH in either direction, since the movement it was based on is over.
 4. **Select the FVG:** Among all bullish FVGs created during the current movement, pick the one with the highest midpoint `(top + bottom) / 2`. If none exists, no order is placed this step.
 5. **Place the entry:** If a candidate FVG was found, no order is currently pending or active, and a TP-Extremum is known, place a Buy Limit at the FVG's midpoint (tick-normalized). The Stop-Loss and Take-Profit are attached right away, they are not set later once the order fills.
-   - **Entry:** midpoint of the selected FVG.
-   - **Stop-Loss (SL):** the low of the candle three bars before the FVG's creation bar, minus 1 tick. This is the candle right before the FVG's 3-candle pattern.
+   - **Entry:** `entry_fraction` of the way up from the bottom of the selected FVG. The default `0.5` is the midpoint.
+   - **Stop-Loss (SL):** the low of the candle `sl_bars_before_gap` bars before the FVG's creation bar, minus `sl_tick_buffer` ticks. With the defaults (3 bars, 1 tick) this is the candle right before the FVG's 3-candle pattern.
    - **Take-Profit (TP):** the current TP-Extremum.
    - If the computed entry would land at or below the SL, the order is skipped for this signal.
 6. **Advance the movement boundary:** Whether or not an order was placed, the current movement boundary resets to the bar of the new BOS/CHoCH. The next entry search only considers FVGs formed after this point.
@@ -49,3 +50,16 @@
 - **Single-slot only:** The agent manages at most one live order or trade at a time, either one pending limit order or one active trade. A new signal while a trade is already active does not add another position. It is only evaluated once that trade is closed and the agent returns to scanning.
 - **Daily timeout (22:00 Berlin/CET-CEST):** At 22:00 Berlin time, any pending order is cancelled and any active trade is closed immediately at market. No new orders are placed for the rest of that trading day. Scanning resumes automatically on the next Berlin calendar date.
 - **Position size:** Fixed quantity of `1.0` contract per trade.
+
+## 7. Parameters
+
+| Parameter            | Meaning                                                                                 | Default | Grid                    |
+| -------------------- | --------------------------------------------------------------------------------------- | ------- | ----------------------- |
+| `zig_zag_bars`       | Bars on each side of a pivot for the HHLL zig zag. More bars give fewer, bigger pivots. | `1`     | `[1, 2, ..., 5]`        |
+| `entry_fraction`     | Where the limit order sits in the selected FVG. `0.0` is the bottom, `1.0` is the top.  | `0.5`   | `[0.0, 0.25, ..., 1.0]` |
+| `sl_bars_before_gap` | Bars before the FVG's creation bar for the stop loss reference candle.                  | `3`     | `[2, 3, 4, 5]`          |
+| `sl_tick_buffer`     | Ticks below the reference candle's low for the stop loss.                               | `1`     | `[0, 1, 2, 5, 10]`      |
+
+The baseline grid has `5 * 5 * 4 * 5 = 500` combinations. The end value of a `GridAxis` is inclusive, so `entry_fraction` is built from `0.0` to `1.25` with step `0.25`.
+
+Not swept: the position size (`1.0` contract) and the daily timeout hour (22:00 Berlin).

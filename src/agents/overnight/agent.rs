@@ -56,7 +56,7 @@ impl UsOpenReversalAgent {
             exchange: Some(Exchange::Cme),
             symbol: Symbol::Future(FutureContract {
                 root: FutureRoot::EminiSp500,
-                month: ContractMonth::September,
+                month: ContractMonth::December,
                 year: ContractYear::Y6,
             }),
             period: Period::Minute(1),
@@ -298,7 +298,7 @@ const fn ohlcv_id() -> OhlcvId {
         exchange: Exchange::Cme,
         symbol: Symbol::Future(FutureContract {
             root: FutureRoot::EminiSp500,
-            month: ContractMonth::September,
+            month: ContractMonth::December,
             year: ContractYear::Y6,
         }),
         period: Period::Minute(1),

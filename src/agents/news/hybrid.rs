@@ -104,8 +104,8 @@ impl Agent for NewsHybrid {
     fn act(&mut self, obs: Observation) -> ChapatyResult<Actions> {
         // 1. Get Proposals (Ask both sub-agents)
         // We clone 'obs' because the sub-agents need their own view
-        let fade_actions = self.fade.act(obs.clone())?;
-        let breakout_actions = self.breakout.act(obs.clone())?;
+        let fade_actions = self.fade.act(obs)?;
+        let breakout_actions = self.breakout.act(obs)?;
 
         let any_breakout_signal =
             breakout_actions.any_open_action(&self.breakout.ohlcv_id().into());

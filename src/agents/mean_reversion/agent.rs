@@ -257,7 +257,7 @@ impl MeanReversionAgentGrid {
             range_lookback: (3..=12).collect(),
             sma_period: (10..=200).step_by(10).collect(),
             atr_period: (5..=30).step_by(5).collect(),
-            atr_mult: GridAxis::new("0.0", "1.05", "0.05")?, // end exclusive
+            atr_mult: GridAxis::new("0.0", "1.0", "0.05")?,
         })
     }
 
