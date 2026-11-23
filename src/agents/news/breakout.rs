@@ -246,7 +246,10 @@ impl Agent for NewsBreakout {
 
         // === 1. Update phase ===
         if self.phase.is_awaiting_news()
-            && let Some(news_event) = obs.market_view.economic_news().last_event(&economic_cal_id)
+            && let Some(news_event) = obs
+                .market_view
+                .economic_calendar()
+                .last_event(&economic_cal_id)
         {
             let news_candle_candidate = obs
                 .market_view
@@ -442,7 +445,7 @@ const fn ohlcv_id() -> OhlcvId {
         exchange: Exchange::Cme,
         symbol: Symbol::Future(FutureContract {
             root: FutureRoot::EurUsd,
-            month: ContractMonth::September,
+            month: ContractMonth::December,
             year: ContractYear::Y6,
         }),
         period: Period::Minute(1),

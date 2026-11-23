@@ -81,7 +81,7 @@ Whenever any one of this agent's positions closes with a loss (`StopLoss` or `Mi
 | `cooldown_bars`     | `u32` |   `10`   | Candles to block new entries for, after the exit candle of a loss.    | `{5, 10, 15, 20}`                           | `{10, 15}`                      |
 | `position_size_usd` | `f64` | `1000.0` | Notional size in USD per position, turned into a BTC amount at entry. | `{500.0, 1000.0, 1500.0, 2000.0}`           | not swept, fixed at the default |
 
-`Grid Search Range` is the sensible range for sweeps. `Baseline Grid (code)` lists exactly the values `ScalpingAgentGrid::baseline()` sweeps, and every one of them lies inside the range. The end value of a `GridAxis` is exclusive, so the baseline has `3^6 * 2^4 = 11664` combinations. The filters `outer_dev_mult > inner_dev_mult` and `rsi_upper > rsi_lower` reject none of them. The builders `with_stop_loss_pct` and `with_take_profit_pct` return an error for a value of `0.0` or less.
+`Grid Search Range` is the sensible range for sweeps. `Baseline Grid (code)` lists exactly the values `ScalpingAgentGrid::baseline()` sweeps, and every one of them lies inside the range. The end value of a `GridAxis` is inclusive, so the baseline has `3^6 * 2^4 = 11664` combinations. The filters `outer_dev_mult > inner_dev_mult` and `rsi_upper > rsi_lower` reject none of them. The builders `with_stop_loss_pct` and `with_take_profit_pct` return an error for a value of `0.0` or less.
 
 ## 8. Assumptions / Out of Scope
 

@@ -248,7 +248,7 @@ impl Agent for NewsFade {
         if self.phase.is_awaiting_news()
             && let Some(news_event) = obs
                 .market_view
-                .economic_news()
+                .economic_calendar()
                 .last_event(&self.economic_cal_id)
         {
             // Check if we already processed this specific event
@@ -421,7 +421,7 @@ const fn ohlcv_id() -> OhlcvId {
         exchange: Exchange::Cme,
         symbol: Symbol::Future(FutureContract {
             root: FutureRoot::EurUsd,
-            month: ContractMonth::September,
+            month: ContractMonth::December,
             year: ContractYear::Y6,
         }),
         period: Period::Minute(1),

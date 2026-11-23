@@ -2,8 +2,9 @@ use std::{collections::BTreeSet, sync::Arc};
 
 use anyhow::{Context, Result};
 use chapaty::prelude::*;
-use chrono::{DateTime, NaiveDate, Timelike, Utc};
+use chrono::{DateTime, NaiveDate, Utc};
 use chrono_tz::Europe::Berlin;
+use itertools::iproduct;
 use serde::Serialize;
 
 // ================================================================================================
@@ -49,6 +50,18 @@ pub struct FvgAgent {
     #[serde(skip)]
     m15_id: OhlcvId,
 
+    // === Parameters (grid search sweeps these, except `trade_qty`) ===
+    /// Bars on each side of a pivot for the HHLL zig zag (left bars = right
+    /// bars).
+    zig_zag_bars: u16,
+    /// Where in the selected FVG the limit order sits. `0.0` is the gap
+    /// bottom, `0.5` the midpoint and `1.0` the gap top.
+    entry_fraction: f64,
+    /// How many bars before the FVG's creation bar the stop loss reference
+    /// candle is. `3` is the candle right before the FVG's 3 candle pattern.
+    sl_bars_before_gap: usize,
+    /// Ticks below the reference candle's low for the stop loss.
+    sl_tick_buffer: u16,
     trade_qty: f64,
 
     // === Indicators ===
@@ -75,8 +88,12 @@ pub struct FvgAgent {
     // === Daily timeout tracking (Berlin/CET timezone) ===
     #[serde(skip)]
     last_m15_ts: Option<DateTime<Utc>>,
+    /// 22:00 Berlin of the current Berlin day, as a UTC instant.
     #[serde(skip)]
-    last_berlin_date: Option<NaiveDate>,
+    timeout_utc: Option<DateTime<Utc>>,
+    /// Start of the next Berlin day, as a UTC instant.
+    #[serde(skip)]
+    next_berlin_midnight_utc: Option<DateTime<Utc>>,
 
     #[serde(skip)]
     trade_counter: i64,
@@ -91,7 +108,7 @@ impl FvgAgent {
             exchange: Some(Exchange::Cme),
             symbol: Symbol::Future(FutureContract {
                 root: FutureRoot::EurUsd,
-                month: ContractMonth::September,
+                month: ContractMonth::December,
                 year: ContractYear::Y6,
             }),
             period: Period::Minute(15),
@@ -115,30 +132,62 @@ impl FvgAgent {
     }
 
     pub fn new() -> Self {
-        let hhll = StreamingHhll::default()
-            .with_zig_zag_period(ZigZagPeriod::symmetric(1))
-            .with_alternation_mode(AlternationMode::Alternating)
-            .with_price_source(PriceSource::OpenClose)
-            .with_tiebreaker(ExtremeTiebreaker::Latest);
+        let zig_zag_bars = 1;
 
         // price_source = OpenClose: a bullish FVG is considered "filled" when
         // min(open, close) of a subsequent candle touches the gap bottom.
-        let fvg = StreamingFairValueGap::default()
-            .with_price_source(PriceSource::OpenClose)
-            .with_ttl_policy(TtlPolicy::Filled);
+        // ttl_policy = 24 hours: gaps older than a day expire. With `Filled`,
+        // gaps far from price stay open for years and every candle checks all
+        // of them, which made this agent slow.
+        let fvg = StreamingFairValueGap::new(TtlPolicy::Time(chrono::Duration::hours(24)))
+            .with_price_source(PriceSource::OpenClose);
 
         Self {
             m15_id: m15_id(),
+            zig_zag_bars,
+            entry_fraction: 0.5,
+            sl_bars_before_gap: 3,
+            sl_tick_buffer: 1,
             trade_qty: 1.0,
-            m15_hhll: hhll,
+            m15_hhll: hhll(zig_zag_bars),
             m15_fvg: fvg,
             movement_start_index: 0,
             tp_extremum: None,
             setup_phase: SetupPhase::Scanning,
             last_m15_ts: None,
-            last_berlin_date: None,
+            timeout_utc: None,
+            next_berlin_midnight_utc: None,
             trade_counter: 0,
             agent_id: AgentIdentifier::Named(Arc::new("FvgAgent".to_string())),
+        }
+    }
+
+    pub fn with_zig_zag_bars(self, zig_zag_bars: u16) -> Self {
+        Self {
+            zig_zag_bars,
+            m15_hhll: hhll(zig_zag_bars),
+            ..self
+        }
+    }
+
+    pub fn with_entry_fraction(self, entry_fraction: f64) -> Self {
+        Self {
+            entry_fraction,
+            ..self
+        }
+    }
+
+    pub fn with_sl_bars_before_gap(self, sl_bars_before_gap: usize) -> Self {
+        Self {
+            sl_bars_before_gap,
+            ..self
+        }
+    }
+
+    pub fn with_sl_tick_buffer(self, sl_tick_buffer: u16) -> Self {
+        Self {
+            sl_tick_buffer,
+            ..self
         }
     }
 }
@@ -161,7 +210,8 @@ impl Agent for FvgAgent {
         self.tp_extremum = None;
         self.setup_phase = SetupPhase::Scanning;
         self.last_m15_ts = None;
-        self.last_berlin_date = None;
+        self.timeout_utc = None;
+        self.next_berlin_midnight_utc = None;
         self.trade_counter = 0;
     }
 
@@ -181,18 +231,26 @@ impl Agent for FvgAgent {
         self.last_m15_ts = Some(candle.close_timestamp);
 
         // === Daily timeout ===
-        let berlin_now = candle.close_timestamp.with_timezone(&Berlin);
-        let berlin_date = berlin_now.date_naive();
-
-        if self.last_berlin_date != Some(berlin_date) {
-            self.last_berlin_date = Some(berlin_date);
+        // The Berlin day boundaries are converted to UTC once per day, so each
+        // candle only compares UTC timestamps instead of converting time zones.
+        let now = candle.close_timestamp;
+        if self
+            .next_berlin_midnight_utc
+            .is_none_or(|midnight| now >= midnight)
+        {
+            if let Some((timeout, midnight)) = berlin_day_bounds(now) {
+                self.timeout_utc = Some(timeout);
+                self.next_berlin_midnight_utc = Some(midnight);
+            }
             if self.setup_phase.is_done_for_day() {
                 self.setup_phase = SetupPhase::Scanning;
             }
         }
 
         // 22:00 Berlin = 21:00 UTC (CET) / 20:00 UTC (CEST)
-        if berlin_now.hour() >= 22 && self.setup_phase.is_done_for_day() {
+        if self.timeout_utc.is_some_and(|timeout| now >= timeout)
+            && self.setup_phase.is_done_for_day()
+        {
             return Ok(self.handle_timeout(&obs));
         }
 
@@ -342,12 +400,14 @@ impl FvgAgent {
             .copied()
     }
 
-    /// Places the limit order at the FVG midpoint.
+    /// Places the limit order inside the FVG, `entry_fraction` of the way up
+    /// from the gap bottom (`0.5` is the midpoint).
     ///
-    /// SL reference: the candle at `fvg.creation_index() - 3` in the market
-    /// slice. The FVG triple is [`creation_index-2`, `creation_index-1`,
-    /// `creation_index`], so `creation_index-3` is the candle directly before
-    /// the left FVG candle.
+    /// SL reference: the candle at `fvg.creation_index() -
+    /// sl_bars_before_gap` in the market slice. The FVG triple is
+    /// [`creation_index-2`, `creation_index-1`, `creation_index`], so with the
+    /// default of 3 the reference is the candle directly before the left FVG
+    /// candle.
     fn try_place_order(
         &mut self,
         fvg: &FairValueGap<OpenState>,
@@ -357,11 +417,15 @@ impl FvgAgent {
         let tp = self.tp_extremum?;
         let symbol = &self.m15_id.symbol;
 
-        let sl_ref_idx = fvg.creation_index().saturating_sub(3);
+        let sl_ref_idx = fvg.creation_index().saturating_sub(self.sl_bars_before_gap);
         let sl_ref = slice.get(sl_ref_idx)?;
 
-        let sl = Price(symbol.normalize_price(sl_ref.low.0 - symbol.tick_size()));
-        let entry = Price(symbol.normalize_price(f64::midpoint(fvg.top().0, fvg.bottom().0)));
+        let sl_buffer = f64::from(self.sl_tick_buffer) * symbol.tick_size();
+        let sl = Price(symbol.normalize_price(sl_ref.low.0 - sl_buffer));
+
+        let gap_height = fvg.top().0 - fvg.bottom().0;
+        let entry =
+            Price(symbol.normalize_price(self.entry_fraction.mul_add(gap_height, fvg.bottom().0)));
 
         if entry.0 <= sl.0 {
             return None;
@@ -427,11 +491,46 @@ impl FvgAgent {
 // Grid Search Builder
 // ================================================================================================
 
-pub struct FvgAgentGrid;
+pub struct FvgAgentGrid {
+    zig_zag_bars: Vec<u16>,
+    entry_fraction: GridAxis,
+    sl_bars_before_gap: Vec<usize>,
+    sl_tick_buffer: Vec<u16>,
+}
 
 impl FvgAgentGrid {
-    pub const fn build() -> Vec<(usize, FvgAgent)> {
-        vec![]
+    /// `5 * 5 * 4 * 5 = 500` combinations. The daily timeout hour and the
+    /// trade quantity are not swept.
+    pub fn baseline() -> ChapatyResult<Self> {
+        Ok(Self {
+            zig_zag_bars: (1..=5).collect(),
+            entry_fraction: GridAxis::new("0.0", "1.0", "0.25")?,
+            sl_bars_before_gap: (2..=5).collect(),
+            sl_tick_buffer: vec![0, 1, 2, 5, 10],
+        })
+    }
+
+    pub fn build(self) -> Vec<(usize, FvgAgent)> {
+        iproduct!(
+            self.zig_zag_bars,
+            self.entry_fraction.generate(),
+            self.sl_bars_before_gap,
+            self.sl_tick_buffer
+        )
+        .enumerate()
+        .map(
+            |(uid, (zig_zag_bars, entry_fraction, sl_bars_before_gap, sl_tick_buffer))| {
+                (
+                    uid,
+                    FvgAgent::new()
+                        .with_zig_zag_bars(zig_zag_bars)
+                        .with_entry_fraction(entry_fraction)
+                        .with_sl_bars_before_gap(sl_bars_before_gap)
+                        .with_sl_tick_buffer(sl_tick_buffer),
+                )
+            },
+        )
+        .collect()
     }
 }
 
@@ -439,15 +538,91 @@ impl FvgAgentGrid {
 // Market Data
 // ================================================================================================
 
+/// HHLL zig zag as the spec describes it, with `zig_zag_bars` on each side.
+fn hhll(zig_zag_bars: u16) -> StreamingHhll {
+    StreamingHhll::default()
+        .with_zig_zag_period(ZigZagPeriod::symmetric(zig_zag_bars))
+        .with_alternation_mode(AlternationMode::Alternating)
+        .with_price_source(PriceSource::OpenClose)
+        .with_tiebreaker(ExtremeTiebreaker::Latest)
+}
+
 const fn m15_id() -> OhlcvId {
     OhlcvId {
         broker: DataBroker::NinjaTrader,
         exchange: Exchange::Cme,
         symbol: Symbol::Future(FutureContract {
             root: FutureRoot::EurUsd,
-            month: ContractMonth::September,
+            month: ContractMonth::December,
             year: ContractYear::Y6,
         }),
         period: Period::Minute(15),
+    }
+}
+
+/// The UTC instants of 22:00 Berlin and of the next Berlin midnight, for the
+/// Berlin day that contains `ts`.
+///
+/// Converting a timestamp to Berlin time looks up the daylight saving rules,
+/// so the agent does it once per day here instead of once per candle. Berlin
+/// switches between CET and CEST at 02:00 or 03:00, so 22:00 and midnight
+/// always exist exactly once.
+fn berlin_day_bounds(ts: DateTime<Utc>) -> Option<(DateTime<Utc>, DateTime<Utc>)> {
+    let date = ts.with_timezone(&Berlin).date_naive();
+    let at = |day: NaiveDate, hour: u32| {
+        day.and_hms_opt(hour, 0, 0)?
+            .and_local_timezone(Berlin)
+            .earliest()
+            .map(|t| t.with_timezone(&Utc))
+    };
+    Some((at(date, 22)?, at(date.succ_opt()?, 0)?))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn utc(s: &str) -> DateTime<Utc> {
+        DateTime::parse_from_rfc3339(s).map_or_default(|t| t.with_timezone(&Utc))
+    }
+
+    #[test]
+    fn berlin_day_bounds_follow_daylight_saving() {
+        // (any time in the Berlin day, 22:00 Berlin in UTC, next midnight in
+        // UTC)
+        let cases = [
+            // Winter (CET, UTC+1)
+            (
+                "2026-01-15T12:00:00Z",
+                "2026-01-15T21:00:00Z",
+                "2026-01-15T23:00:00Z",
+            ),
+            // Summer (CEST, UTC+2)
+            (
+                "2026-07-15T12:00:00Z",
+                "2026-07-15T20:00:00Z",
+                "2026-07-15T22:00:00Z",
+            ),
+            // Spring forward on 2026-03-29: the day starts in CET, ends in CEST
+            (
+                "2026-03-29T05:00:00Z",
+                "2026-03-29T20:00:00Z",
+                "2026-03-29T22:00:00Z",
+            ),
+            // 23:30 Berlin still belongs to the same Berlin day
+            (
+                "2026-01-15T22:30:00Z",
+                "2026-01-15T21:00:00Z",
+                "2026-01-15T23:00:00Z",
+            ),
+        ];
+
+        for (now, timeout, midnight) in cases {
+            assert_eq!(
+                berlin_day_bounds(utc(now)),
+                Some((utc(timeout), utc(midnight))),
+                "day containing {now}"
+            );
+        }
     }
 }

@@ -12,7 +12,7 @@
 ## 3. Observation Inputs
 
 - **Time:** `obs.market_view.current_timestamp()` to test whether `wait_duration` has elapsed since the release.
-- **Economic Calendar:** `obs.market_view.economic_news().last_event(&economic_cal_id)` to detect the triggering news event and read its `timestamp`.
+- **Economic Calendar:** `obs.market_view.economic_calendar().last_event(&economic_cal_id)` to detect the triggering news event and read its `timestamp`.
 - **Market Data (news candle):** `obs.market_view.ohlcv().last_event(&ohlcv_id)`, kept only when `candle.open_timestamp == news_event.timestamp`, to derive the fade direction and the take-profit anchor.
 - **Market Data (entry price):** `obs.market_view.try_resolved_close_price(ohlcv_id.symbol)` to price the stop-loss and submit the order.
 - **Portfolio State:** `obs.states.any_active_trade_for_agent(&self.identifier())` to enforce at-most-one open position.

@@ -12,7 +12,7 @@
 ## 3. Observation Inputs
 
 - **Time:** `obs.market_view.current_timestamp()` to measure elapsed time since the news release and gate the entry window.
-- **Economic Calendar:** `obs.market_view.economic_news().last_event(&economic_cal_id)` to detect the triggering news event and read its `timestamp`.
+- **Economic Calendar:** `obs.market_view.economic_calendar().last_event(&economic_cal_id)` to detect the triggering news event and read its `timestamp`.
 - **Market Data (news candle):** `obs.market_view.ohlcv().last_event(&ohlcv_id)`, kept only when `candle.open_timestamp == news_event.timestamp`, to capture the candle that frames the breakout range and direction.
 - **Market Data (entry price):** `obs.market_view.try_resolved_close_price(ohlcv_id.symbol)` to test the breakout and price the order.
 - **Portfolio State:** `obs.states.any_active_trade_for_agent(&self.identifier())` to enforce at-most-one open position.
