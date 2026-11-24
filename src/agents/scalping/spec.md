@@ -35,6 +35,7 @@ Run this once per new closed candle.
 
    The grid keeps `outer_dev_mult > inner_dev_mult` and `rsi_upper > rsi_lower`, so a
    candle can carry at most one signal.
+
 5. A signal only counts as new if it differs from the previous candle's signal.
    If the previous candle already had `Some(Long)`, another `Some(Long)` is not new,
    until the price leaves the green zone or the RSI condition breaks at least once
@@ -67,21 +68,21 @@ Whenever any one of this agent's positions closes with a loss (`StopLoss` or `Mi
 
 ## 7. Parameters
 
-| Field               |  Type | Default  | Description                                                           | Grid Search Range                           | Baseline Grid (code)            |
+| Field               | Type  | Default  | Description                                                           | Grid Search Range                           | Baseline Grid (code)            |
 | ------------------- | :---: | :------: | --------------------------------------------------------------------- | ------------------------------------------- | ------------------------------- |
 | `vwap_window`       | `u16` |   `60`   | How many candles the rolling VWAP window covers.                      | `{40, 50, 60, 70, 80}`                      | `{50, 60, 70}`                  |
-| `inner_dev_mult`    | `f64` |  `2.0`   | Multiplier for the inner edge of each band (the Dev 2 line).          | `{1.5, 1.75, 2.0, 2.25, 2.5}`               | `{1.75, 2.0, 2.25}`             |
-| `outer_dev_mult`    | `f64` |  `3.0`   | Multiplier for the outer edge of each band (the Dev 3 line).          | `{2.5, 2.75, 3.0, 3.25, 3.5}`               | `{2.75, 3.0, 3.25}`             |
+| `inner_dev_mult`    | `f64` |  `2.0`   | Multiplier for the inner edge of each band (the Dev 2 line).          | `{1.5, 1.75, 2.0, 2.25, 2.5}`               | `{1.75, 2.0, 2.25, 2.5}`        |
+| `outer_dev_mult`    | `f64` |  `3.0`   | Multiplier for the outer edge of each band (the Dev 3 line).          | `{2.5, 2.75, 3.0, 3.25, 3.5}`               | `{2.75, 3.0, 3.25, 3.5}`        |
 | `rsi_length`        | `u16` |   `5`    | How many candles the OBV RSI smoothing covers.                        | `{3, 4, 5, 6, 7, 8}`                        | `{4, 5, 6}`                     |
-| `rsi_lower`         | `f64` |  `30.0`  | OBV RSI has to be at or under this for a long signal.                 | `{20.0, 25.0, 30.0, 35.0}`                  | `{25.0, 30.0}`                  |
-| `rsi_upper`         | `f64` |  `70.0`  | OBV RSI has to be at or over this for a short signal.                 | `{65.0, 70.0, 75.0, 80.0}`                  | `{70.0, 75.0}`                  |
-| `stop_loss_pct`     | `f64` | `0.006`  | Stop loss distance from entry, as a fraction (`0.006` is 0.6%).       | `{0.003, 0.004, 0.005, 0.006, 0.008, 0.01}` | `{0.004, 0.006, 0.008}`         |
-| `take_profit_pct`   | `f64` | `0.006`  | Take profit distance from entry, as a fraction.                       | `{0.003, 0.004, 0.005, 0.006, 0.008, 0.01}` | `{0.004, 0.006}`                |
-| `max_pyramid`       |  `u8` |   `3`    | Most positions allowed open on the same side at once.                 | `{1, 2, 3}`                                 | `{1, 2, 3}`                     |
+| `rsi_lower`         | `f64` |  `30.0`  | OBV RSI has to be at or under this for a long signal.                 | `{20.0, 25.0, 30.0, 35.0}`                  | `{25.0, 30.0, 35.0}`            |
+| `rsi_upper`         | `f64` |  `70.0`  | OBV RSI has to be at or over this for a short signal.                 | `{65.0, 70.0, 75.0, 80.0}`                  | `{70.0, 75.0, 80.0}`            |
+| `stop_loss_pct`     | `f64` | `0.006`  | Stop loss distance from entry, as a fraction (`0.006` is 0.6%).       | `{0.003, 0.004, 0.005, 0.006, 0.008, 0.01}` | `{0.004, 0.006, 0.008, 0.01}`   |
+| `take_profit_pct`   | `f64` | `0.006`  | Take profit distance from entry, as a fraction.                       | `{0.003, 0.004, 0.005, 0.006, 0.008, 0.01}` | `{0.004, 0.006, 0.008}`         |
+| `max_pyramid`       | `u8`  |   `3`    | Most positions allowed open on the same side at once.                 | `{1, 2, 3}`                                 | `{1, 2, 3}`                     |
 | `cooldown_bars`     | `u32` |   `10`   | Candles to block new entries for, after the exit candle of a loss.    | `{5, 10, 15, 20}`                           | `{10, 15}`                      |
 | `position_size_usd` | `f64` | `1000.0` | Notional size in USD per position, turned into a BTC amount at entry. | `{500.0, 1000.0, 1500.0, 2000.0}`           | not swept, fixed at the default |
 
-`Grid Search Range` is the sensible range for sweeps. `Baseline Grid (code)` lists exactly the values `ScalpingAgentGrid::baseline()` sweeps, and every one of them lies inside the range. The end value of a `GridAxis` is inclusive, so the baseline has `3^6 * 2^4 = 11664` combinations. The filters `outer_dev_mult > inner_dev_mult` and `rsi_upper > rsi_lower` reject none of them. The builders `with_stop_loss_pct` and `with_take_profit_pct` return an error for a value of `0.0` or less.
+`Grid Search Range` is the sensible range for sweeps. `Baseline Grid (code)` lists exactly the values `ScalpingAgentGrid::baseline()` sweeps, and every one of them lies inside the range. The end value of a `GridAxis` is inclusive, so the baseline has `4^3 * 3^6 * 2 = 93312` combinations. The filters `outer_dev_mult > inner_dev_mult` and `rsi_upper > rsi_lower` reject none of them. The builders `with_stop_loss_pct` and `with_take_profit_pct` return an error for a value of `0.0` or less.
 
 ## 8. Assumptions / Out of Scope
 

@@ -60,6 +60,6 @@
 | `sl_bars_before_gap` | Bars before the FVG's creation bar for the stop loss reference candle.                  | `3`     | `[2, 3, 4, 5]`          |
 | `sl_tick_buffer`     | Ticks below the reference candle's low for the stop loss.                               | `1`     | `[0, 1, 2, 5, 10]`      |
 
-The baseline grid has `5 * 5 * 4 * 5 = 500` combinations. The end value of a `GridAxis` is inclusive, so `entry_fraction` is built from `0.0` to `1.25` with step `0.25`.
+The baseline grid has `5 * 5 * 4 * 5 = 500` combinations. The end value of a `GridAxis` is inclusive, so `entry_fraction` is built from `0.0` to `1.0` with step `0.25`.
 
 Not swept: the position size (`1.0` contract) and the daily timeout hour (22:00 Berlin).

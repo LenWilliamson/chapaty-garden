@@ -610,13 +610,15 @@ pub struct ScalpingAgentGrid {
 }
 
 impl ScalpingAgentGrid {
-    /// An overnight-scale search space: 6 axes with 3 values and 4 axes with
-    /// 2 values, `3^6 * 2^4 = 11664` combinations. The two filters below
+    /// A search space of roughly 93 thousand agents. The end value of every
+    /// `GridAxis` is inclusive, so 3 axes have 4 values (`inner_dev_mult`,
+    /// `outer_dev_mult`, `stop_loss_pct`), 6 axes have 3 values and 1 axis has
+    /// 2 values, `4^3 * 3^6 * 2 = 93312` combinations. The two filters below
     /// (`outer_dev_mult` bigger than `inner_dev_mult`, `rsi_upper` bigger
     /// than `rsi_lower`) never reject any of them, since the ranges chosen
     /// here do not overlap, so `build()` returns exactly that many agents.
-    /// At the roughly 30 minutes per 400 agents this strategy measured on
-    /// its full 2017-to-today dataset, that is roughly 15 hours.
+    /// A full run on this strategy's 2017-to-today dataset takes roughly 8
+    /// hours.
     pub fn baseline() -> ChapatyResult<Self> {
         Ok(Self {
             vwap_window: vec![50, 60, 70],
