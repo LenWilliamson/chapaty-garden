@@ -2,10 +2,11 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use chapaty::prelude::*;
+use chrono::Duration;
 use itertools::iproduct;
 use serde::Serialize;
 
-use crate::agents::news::{NewsBreakout, NewsBreakoutGrid, NewsFade, NewsFadeGrid};
+use crate::agents::news::{NewsBreakout, NewsFade};
 
 /// A decision agent that coordinates between [`NewsFade`] and
 /// [`NewsBreakout`] strategies.
@@ -164,33 +165,74 @@ impl Agent for NewsHybrid {
 // ================================================================================================
 
 pub struct NewsHybridGrid {
-    fade: NewsFadeGrid,
-    breakout: NewsBreakoutGrid,
+    // === Breakout axes ===
+    breakout_earliest_entry: Vec<i64>,
+    breakout_latest_entry: Vec<i64>,
+    breakout_stop_loss_risk_factor: GridAxis,
+    breakout_risk_reward_ratio: GridAxis,
+
+    // === Fade axes ===
+    fade_wait_duration: Vec<i64>,
+    fade_take_profit_risk_factor: GridAxis,
+    fade_risk_reward_ratio: GridAxis,
 }
 
 impl NewsHybridGrid {
-    /// Creates a grid generator with a default "Baseline" search space.
+    /// The hybrid has its own, coarser search space. Combining the full
+    /// breakout and fade baselines would give billions of agents, which do not
+    /// fit in memory.
+    ///
+    /// Breakout `4 * 4 * 5 * 10 = 800` times fade `10 * 10 * 10 = 1000` gives
+    /// `800000` agents. The end value of every `GridAxis` is inclusive.
     pub fn baseline() -> ChapatyResult<Self> {
         Ok(Self {
-            fade: NewsFadeGrid::baseline()?,
-            breakout: NewsBreakoutGrid::baseline()?,
+            breakout_earliest_entry: (1..=4).collect(),
+            breakout_latest_entry: (20..=26).step_by(2).collect(),
+            breakout_stop_loss_risk_factor: GridAxis::new("0.5", "1.5", "0.25")?,
+            breakout_risk_reward_ratio: GridAxis::new("0.25", "2.5", "0.25")?,
+            fade_wait_duration: (5..=23).step_by(2).collect(),
+            fade_take_profit_risk_factor: GridAxis::new("0.5", "2.75", "0.25")?,
+            fade_risk_reward_ratio: GridAxis::new("0.1", "1.0", "0.1")?,
         })
     }
 
+    #[expect(
+        clippy::expect_used,
+        reason = "both risk_reward_ratio grid axes are always > 0.0 by construction"
+    )]
     pub fn build(self) -> Vec<(usize, NewsHybrid)> {
-        let breakout_agents = self.breakout.build();
-        let fade_agents = self.fade.build();
-
-        iproduct!(breakout_agents, fade_agents)
-            .enumerate()
-            .map(|(uid, (breakout, fade))| {
+        iproduct!(
+            self.breakout_earliest_entry,
+            self.breakout_latest_entry,
+            self.breakout_stop_loss_risk_factor.generate(),
+            self.breakout_risk_reward_ratio.generate(),
+            self.fade_wait_duration,
+            self.fade_take_profit_risk_factor.generate(),
+            self.fade_risk_reward_ratio.generate()
+        )
+        .filter(|(earliest, latest, ..)| earliest < latest)
+        .enumerate()
+        .map(
+            |(uid, (earliest, latest, slrf, breakout_rrr, wait, tprf, fade_rrr))| {
+                let breakout = NewsBreakout::new()
+                    .with_earliest_entry_candle(Duration::minutes(earliest))
+                    .with_latest_entry_candle(Duration::minutes(latest))
+                    .with_stop_loss_risk_factor(slrf)
+                    .with_risk_reward_ratio(breakout_rrr)
+                    .expect("Valid grid parameters");
+                let fade = NewsFade::new()
+                    .with_candles_after_news(Duration::minutes(wait))
+                    .with_take_profit_risk_factor(tprf)
+                    .with_risk_reward_ratio(fade_rrr)
+                    .expect("Valid grid parameters");
                 (
                     uid,
                     NewsHybrid::new()
-                        .with_breakout_agent(breakout.1)
-                        .with_fade_agent(fade.1),
+                        .with_breakout_agent(breakout)
+                        .with_fade_agent(fade),
                 )
-            })
-            .collect()
+            },
+        )
+        .collect()
     }
 }

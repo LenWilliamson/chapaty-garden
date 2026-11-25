@@ -70,7 +70,21 @@ return no_op
 | `stop_loss_risk_factor` | `0.89`   |
 | `risk_reward_ratio`     | `0.726`  |
 
-`NewsHybridGrid` builds the Cartesian product (`iproduct!`) of the breakout grid and the fade grid, re-indexing each pairing with a fresh `uid`. Note the combined grid size is `|breakout_grid| * |fade_grid|`, so constrain the sub-grids before sweeping.
+### Grid
+
+`NewsHybridGrid::baseline()` has its **own, coarser search space**. It does not reuse the breakout and fade baselines, because their product is billions of agents and does not fit in memory.
+
+| Sub-agent | Field                     | Grid                     | Values |
+| --------- | ------------------------- | ------------------------ | ------ |
+| Breakout  | `earliest_entry` (min)    | `[1, 2, 3, 4]`           | 4      |
+| Breakout  | `latest_entry` (min)      | `[20, 22, 24, 26]`       | 4      |
+| Breakout  | `stop_loss_risk_factor`   | `[0.5, 0.75, ..., 1.5]`  | 5      |
+| Breakout  | `risk_reward_ratio`       | `[0.25, 0.5, ..., 2.5]`  | 10     |
+| Fade      | `wait_duration` (min)     | `[5, 7, ..., 23]`        | 10     |
+| Fade      | `take_profit_risk_factor` | `[0.5, 0.75, ..., 2.75]` | 10     |
+| Fade      | `risk_reward_ratio`       | `[0.1, 0.2, ..., 1.0]`   | 10     |
+
+The grid is the Cartesian product (`iproduct!`) of all seven axes: `800` breakout settings times `1000` fade settings gives `800000` agents. The filter `earliest_entry < latest_entry` rejects none of them. The end value of a `GridAxis` is inclusive.
 
 ## 7. Assumptions / Out of Scope
 
